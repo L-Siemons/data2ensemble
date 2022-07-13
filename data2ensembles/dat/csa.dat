@@ -1,0 +1,24 @@
+# The CSA values are taken from
+# Dynamics of Large Elongated RNA by NMR Carbon Relaxation Alexandar L. Hansen and Hashim M. Al-Hashimi*
+# https://pubs.acs.org/doi/pdf/10.1021/ja012485c
+C2 A 168e-6
+C5 C 144e-6
+C6 C 186e-6
+C6 T 168e-6
+C6 C 208e-6
+C8 G 133e-6
+C8 A 144e-6
+C1' A 40e-6
+C1' C 40e-6
+C1' G 40e-6
+C1' T 40e-6
+C3' A 40e-6 # C3 and C4 CSAs are temporary!
+C3' C 40e-6
+C3' G 40e-6
+C3' T 40e-6
+C4' A 40e-6
+C4' C 40e-6
+C4' G 40e-6
+C4' T 40e-6
+N1  G -130e-6 # taken from Akke, M., Fiala, R., Jiang, F., Patal, D. and Palmer, A.G.I. (1997) RNA, 3, 702–709.
+N3  T -100e-6 # taken from Akke, M., Fiala, R., Jiang, F., Patal, D. and Palmer, A.G.I. (1997) RNA, 3, 702–709.

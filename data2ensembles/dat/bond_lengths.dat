@@ -1,0 +1,8 @@
+#atom1 atom2 lengthInM
+C1' H1' 1.115e-10 
+C3' H3' 1.115e-10 # should check 
+C4' H4' 1.115e-10 # should check 
+C8 H8   1.104e-10 #https://pubs.acs.org/doi/pdf/10.1021/ja0757982
+C5 H5   1.104e-10 #https://pubs.acs.org/doi/pdf/10.1021/ja0757982
+C2 H2   1.104e-10 #https://pubs.acs.org/doi/pdf/10.1021/ja0757982
+C6 H6   1.104e-10 #https://pubs.acs.org/doi/pdf/10.1021/ja0757982
