@@ -243,25 +243,8 @@ def guess_from_local_tc(r1_file, r2_file, hetNoe_file,
             x.append(tci)
             y.append(tci_calc)
 
-            # this block does some error analysis but the errors are tiny so meh ...
-            # mc_list = []
-            # dict = {}
-            # dict['q12'] = selected_params['q12'].value
-            # dict['q13'] = selected_params['q12'].value
-            # dict['q23'] = selected_params['q12'].value
-            # for _ in range(mc_steps):
-
-            #     dict['q11'] = r.gauss(selected_params['q11'].value, selected_params['q11'].stderr)
-            #     dict['q22'] = r.gauss(selected_params['q22'].value, selected_params['q22'].stderr)
-            #     dict['q33'] = r.gauss(selected_params['q33'].value, selected_params['q33'].stderr)
-            #     mc_list.append(1/(6*di_model(selected_params, angs)))
-
-            # model_errors.append(np.std(mc_list))
-
         xerr = np.array(local_correlation_times_err)
-        # yerr = np.array(model_errors)
-        # print(np.mean(yerr))
-
+        
         x = np.array(x)
         y = np.array(y)
         minimum = min([min(x), min(y)]) * 0.9
