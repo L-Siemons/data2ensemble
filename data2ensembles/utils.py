@@ -1,7 +1,7 @@
 import numpy as np
 import pkg_resources
 import scipy 
-import scipy.constants
+import scipy.constants 
 from scipy.spatial.transform import Rotation as scipyRotation
 import string
 import numpy as np
@@ -25,7 +25,7 @@ class PhysicalQuantities(object):
         
         #read the CSA 
         self.csa_isotropic = {}
-        file = pkg_resources.resource_filename('data2ensembles', 'dat/csa.dat')
+        file = pkg_resources.resource_filename('data2ensembles', 'dat/csa_isotropic.dat')
         file = open(file, 'r')
         for i in file.readlines():
             if i[0] != '#':
@@ -70,8 +70,8 @@ class PhysicalQuantities(object):
         '''
 
         # scalling factor for the dipolar interaction 
-        d_top = self.mu0 * self.h * self.gamma[x] * self.gamma[y]
-        d_bot = 8*(r**3)*(np.pi**2)
+        d_top = self.mu0 * self.hbar * self.gamma[x] * self.gamma[y]
+        d_bot = 4*np.pi*((r)**3)
         d = d_top/d_bot
 
         return d
@@ -145,8 +145,19 @@ def read_fitted_spectral_density(f):
                 data[(resid, atoms)] = params
 
     f.close()
-
     return data
+
+def read_diffusion_tensor(file):
+    f = open(file)
+    line = f.readlines()[1]
+    s = line.split()
+    #given in dx,dy,dz
+    values = [float(s[a]) for a in [1,4,7]]
+    errors = [float(s[a]) for a in [2,5,7]]
+    return values, errors
+
+
+
 
 def is_right_handed(M):
     """Is matrix right handed"""
@@ -217,4 +228,3 @@ def get_atom_info_from_rate_key(key):
 
         return atom1_letters, atom1_numbers, atom1_res_type, atom1_resid, atom1_type, atom2_letters, atom2_numbers, atom2_res_type, atom2_resid, atom2_type
 
-#
