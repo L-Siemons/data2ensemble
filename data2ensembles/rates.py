@@ -1,6 +1,7 @@
 from .utils import *
 import numpy as np
 
+
 '''
 Here there are some functions for relaxation rates. The definitions  for
 r1_YX(), r2_YX() and noe_YX() are taken from the model free manual available at
@@ -38,7 +39,7 @@ def r1_YX(params, spectral_density, fields,
                        6.*spectral_density(params, [omega_y+omega_x]+cosine_angles))
 
     term2 = csa_prefactor*spectral_density(params, [omega_x]+cosine_angles)
-
+    #print('R1', term2/(term1 + term2))
     return term1 + term2
 
 
@@ -57,7 +58,9 @@ def r2_YX(params, spectral_density, fields,
     cosine_angles - these are a list that can be used to pass additional paremeters to spectral_density
     '''
 
+    #print(rxy)
     dd_prefactor = (PhysQ.calc_dd(x,y,rxy)**2)/8
+    #print(fields, x, csa_atom_name, PhysQ.calc_iso_csa(fields, x, csa_atom_name))
     csa_prefactor = (PhysQ.calc_iso_csa(fields, x, csa_atom_name)**2)/6
     omega_x = PhysQ.calc_omega(x, fields)
     omega_y = PhysQ.calc_omega(y, fields)
@@ -70,7 +73,7 @@ def r2_YX(params, spectral_density, fields,
 
     term2 = csa_prefactor*(4*spectral_density(params,[ 0.]+cosine_angles) \
                          + 3*spectral_density(params, [omega_x]+cosine_angles))
-
+    
     return term1 + term2
 
 
@@ -79,7 +82,7 @@ def noe_YX(params, spectral_density, fields,
     rxy, x, r1, y='h', cosine_angles=[], PhysQ=PhysicalQuantities):
 
     '''
-    This function calculates the R2 rate for atom X in a X-Y spin
+    This function calculates the noe rate for atom X in a X-Y spin
     
     params - dictionary like obejct containing the parameters for spectral_density
     fields - fields in tesla
@@ -91,13 +94,40 @@ def noe_YX(params, spectral_density, fields,
 
     '''
 
+
     dd_prefactor = (PhysQ.calc_dd(x,y,rxy)**2)/(4*r1)
-    gammas = PhysQ.gamma[x]/PhysQ.gamma[y]
+    gammas = PhysQ.gamma[y]/PhysQ.gamma[x]
     omega_x = PhysQ.calc_omega(x, fields)
     omega_y = PhysQ.calc_omega(y, fields)
 
     term2 = 1 + dd_prefactor * gammas * \
                (6*spectral_density(params, [omega_x+omega_y]+cosine_angles) \
                 - spectral_density(params, [omega_y-omega_x]+cosine_angles))
+
+    return term2
+
+def r1_reduced_noe_YX(params, spectral_density, fields,
+    rxy, x, y='h', cosine_angles=[], PhysQ=PhysicalQuantities):
+
+    '''
+    This function calculates the (Noe-1)*R1. This is being used in some fitting routines
+    
+    params - dictionary like obejct containing the parameters for spectral_density
+    fields - fields in tesla
+    spectral_density - spectral density and the input for it must be (params, omega)
+    rxy - distance between atoms X and y in meters
+    csa_atom_name - is the name of the CSA atom
+    cosine_angles - these are a list that can be used to pass additional paremeters to spectral_density
+    r1 - the r1 rate (eg r1_YX)
+
+    '''
+    dd_prefactor = (PhysQ.calc_dd(x,y,rxy)**2)/4
+    gammas = PhysQ.gamma[y]/PhysQ.gamma[x]
+    omega_x = PhysQ.calc_omega(x, fields)
+    omega_y = PhysQ.calc_omega(y, fields)
+
+    term2 = dd_prefactor * gammas * \
+           (6*spectral_density(params, [omega_x+omega_y]+cosine_angles) \
+            - spectral_density(params, [omega_y-omega_x]+cosine_angles))
 
     return term2
