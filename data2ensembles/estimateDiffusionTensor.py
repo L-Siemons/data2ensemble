@@ -33,14 +33,11 @@ def guess_from_local_tc(r1_file, r2_file, hetNoe_file,
     def resid(params, cur_r1, cur_r2, cur_noe, csa_key, bondlength, fields, nucleus_type):
 
         y = np.array([cur_r1, cur_r2, cur_noe]).T
-
-        #try fitting r2/r1 
-        #y = cur_r2/cur_r1
-
         spec_den = d2e.spectralDensity.J_iso_tauc_only
 
         model_r1 = d2e.rates.r1_YX(params, spec_den, fields, bondlength, csa_key, nucleus_type)
         model_r2 = d2e.rates.r2_YX(params, spec_den, fields, bondlength, csa_key, nucleus_type)
+        #print(model_r2, cur_r2)
         model_noe = d2e.rates.noe_YX(params, spec_den, fields, bondlength, nucleus_type, model_r1)
         model = np.array([model_r1,model_r2, model_noe])
         return y - model
