@@ -1,0 +1,23 @@
+# here I have tried to use the values in the paper by hashimi on TAR
+# https://pubs.acs.org/doi/pdf/10.1021/ja0757982
+# https://pubs.acs.org/doi/pdf/10.1021/ja061984g
+# C8 A 133.0e-6 
+# C8 G 144.0e-6 
+# C2 A 168.0e-6 
+# C6 C 212.0e-6 
+# C6 T 168.0e-6 
+# C5 C 144.0e-6
+# C1' A 26.545e-6 
+# C1' G 26.545e-6 
+# C1' T 26.545e-6 
+# C1' C 26.545e-6 
+C8 A 111.0e-6 
+C8 G 144.0e-6 
+C2 A 133.5e-6 
+C6 C 144.0e-6 
+C6 T 145.5e-6 
+C5 C 123.5e-6
+C1' A 25.445e-6 
+C1' G 25.445e-6 
+C1' T 25.445e-6 
+C1' C 25.445e-6 

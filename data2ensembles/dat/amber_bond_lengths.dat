@@ -1,0 +1,8 @@
+# these bond lengths come from my dft calculations of the dntps that I carried out to determine the CSA
+# in cases where there was a little varriation between the residues I averaged them together
+#atom1 atom2 lengthInM
+C1' H1' 1.09002295e-10
+C8  H8  1.08006765e-10
+C5  H5  1.0800084e-10
+C2  H2  1.0800284e-10
+C6  H6  1.08001265e-10

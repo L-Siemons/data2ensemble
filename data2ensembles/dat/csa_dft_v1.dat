@@ -1,0 +1,14 @@
+# The CSA values come from DFT calculations carried out on the 
+# free dna base see the directory 
+# /Users/lucassiemons/Desktop/important_stuff/Work_school_university/2021_dna_relaxometry/dft/1_dntp_cs/2_cs
+# B3LYP + EPR-III basis set
+C1' A 56.2e-6
+C1' C 47.9e-6
+C1' G 66.5e-6
+C1' T 58.4e-6
+C2  A 139.4e-6
+C8  G 99.2e-6
+C8  A 110.5e-6
+C6  C 179.1e-6
+C6  T 137.3e-6
+C5  C 136.5e-6

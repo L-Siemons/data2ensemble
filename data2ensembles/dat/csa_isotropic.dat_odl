@@ -1,0 +1,11 @@
+#atom_name residue csa #Notes
+C1' A -0.99943502824e-6 #https://doi.org/10.1021/ja051039c NMRfit, : 17.7 -0.89 -16.8 (d22 + d33)/d11
+C1' G -0.99943502824e-6 #https://doi.org/10.1021/ja051039c NMRfit, : 17.7 -0.89 -16.8
+C1' T -0.99943502824e-6 #https://doi.org/10.1021/ja051039c NMRfit, : 17.7 -0.89 -16.8
+C1' C -0.99943502824e-6 #https://doi.org/10.1021/ja051039c NMRfit, : 17.7 -0.89 -16.8
+C8 A -132e-6 #https://link.springer.com/content/pdf/10.1007/s10858-005-0659-x.pdf
+C8 G -132e-6 #https://link.springer.com/content/pdf/10.1007/s10858-005-0659-x.pdf
+C2 A -132e-6 #PLACE HOLDER!
+C6 C  -184e-6  #https://link.springer.com/content/pdf/10.1007/s10858-005-0659-x.pdf
+C6 T  -184e-6  #https://link.springer.com/content/pdf/10.1007/s10858-005-0659-x.pdf
+C5 C  -184e-6  #PLACE HOLDER!
