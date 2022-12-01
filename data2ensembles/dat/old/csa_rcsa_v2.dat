@@ -1,0 +1,14 @@
+# The CSA values are taken from
+# Dynamics of Large Elongated RNA by NMR Carbon Relaxation Alexandar L. Hansen and Hashim M. Al-Hashimi*
+# https://pubs.acs.org/doi/pdf/10.1021/ja012485c
+# the aromatic csas are taken from: https://doi.org/10.1016/j.jmr.2005.12.012
+C2 A 127.05000000000001e-6
+C5 C 120.05000000000001e-6
+C6 T 154.05e-6
+C6 C 147.60000000000002e-6
+C8 G 114.0e-6
+C8 A 117.44999999999999e-6
+C1' A 32.75e-6
+C1' C 32.75e-6
+C1' G 32.75e-6
+C1' T 32.75e-6
