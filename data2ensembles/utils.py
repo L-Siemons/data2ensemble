@@ -25,7 +25,7 @@ class PhysicalQuantities(object):
         
         #read the CSA 
         self.csa_isotropic = {}
-        file = pkg_resources.resource_filename('data2ensembles', 'dat/csa_isotropic.dat')
+        file = pkg_resources.resource_filename('data2ensembles', 'dat/csa_dft_v2.dat')
         file = open(file, 'r')
         for i in file.readlines():
             if i[0] != '#':
@@ -41,7 +41,7 @@ class PhysicalQuantities(object):
 
         #def read in bond lengths
         self.bondlengths = {}
-        file = pkg_resources.resource_filename('data2ensembles', 'dat/bond_lengths.dat')
+        file = pkg_resources.resource_filename('data2ensembles', 'dat/dft_bond_lengths_v2.dat')
         file = open(file, 'r')
         for i in file.readlines():
             if i[0] != '#':
@@ -50,8 +50,6 @@ class PhysicalQuantities(object):
                     key = (s[0], s[1])
                     self.bondlengths[key] = float(s[2])
         file.close()
-
-
 
     def calc_omega(self, x, fields):
         '''
@@ -71,7 +69,7 @@ class PhysicalQuantities(object):
 
         # scalling factor for the dipolar interaction 
         d_top = self.mu0 * self.hbar * self.gamma[x] * self.gamma[y]
-        d_bot = 4*np.pi*((r)**3)
+        d_bot = 4*np.pi*(r**3)
         d = d_top/d_bot
 
         return d
@@ -156,7 +154,23 @@ def read_diffusion_tensor(file):
     errors = [float(s[a]) for a in [2,5,7]]
     return values, errors
 
+def read_csa_orientation_info():
+    
+    file = pkg_resources.resource_filename('data2ensembles', 'dat/csa_orientations.dat')
+    f = open(file)
+    data = {}
+    for i in f.readlines():
+        if i[0] != '#':
+            s = i.split()
 
+            #index by resnae
+            if s[2] not in data:
+                data[s[2]] = {}
+            #index by atom type
+            data[s[2]][s[1]] = s
+
+    f.close()
+    return data
 
 
 def is_right_handed(M):
