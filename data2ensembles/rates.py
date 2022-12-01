@@ -13,7 +13,8 @@ PhysicalQuantities = PhysicalQuantities()
 
 def r1_YX(params, spectral_density, fields,
     rxy, csa_atom_name, x, y='h', 
-    cosine_angles = [], PhysQ=PhysicalQuantities):
+    cosine_angles = [], csa_cosine_angles=None, 
+    PhysQ=PhysicalQuantities):
 
     '''
     This function calculates the R1 rate for atom X in a X-Y spin
@@ -38,14 +39,21 @@ def r1_YX(params, spectral_density, fields,
                        3.*spectral_density(params, [omega_x]+cosine_angles) + \
                        6.*spectral_density(params, [omega_y+omega_x]+cosine_angles))
 
-    term2 = csa_prefactor*spectral_density(params, [omega_x]+cosine_angles)
+    # if the csa_cosine_angles are none we use the angles for the dipolar interaction
+    if csa_cosine_angles == None:
+        csa_cosine_angles = cosine_angles
+
+    term2 = csa_prefactor*spectral_density(params, [omega_x]+csa_cosine_angles)
+    #print(term1, term2, term1/term2)
     #print('R1', term2/(term1 + term2))
+    #print(f'{x} {y} {dd_prefactor} {csa_prefactor} {dd_prefactor/csa_prefactor:.2f} {rxy} {csa_atom_name}')
     return term1 + term2
 
 
 def r2_YX(params, spectral_density, fields,
     rxy, csa_atom_name, x,
-    y='h', cosine_angles=[], PhysQ=PhysicalQuantities):
+    y='h', cosine_angles=[], csa_cosine_angles=None,
+    PhysQ=PhysicalQuantities):
 
     '''
     This function calculates the R2 rate for atom X in a X-Y spin
@@ -71,9 +79,13 @@ def r2_YX(params, spectral_density, fields,
                               6*spectral_density(params, [omega_y]+cosine_angles) + \
                               6*spectral_density(params, [omega_x+omega_y]+cosine_angles))
 
-    term2 = csa_prefactor*(4*spectral_density(params,[ 0.]+cosine_angles) \
-                         + 3*spectral_density(params, [omega_x]+cosine_angles))
-    
+    # if the csa_cosine_angles are none we use the angles for the dipolar interaction
+    if csa_cosine_angles == None:
+        csa_cosine_angles = cosine_angles
+
+    term2 = csa_prefactor*(4*spectral_density(params,[ 0.]+csa_cosine_angles) \
+                         + 3*spectral_density(params, [omega_x]+csa_cosine_angles))
+ 
     return term1 + term2
 
 
