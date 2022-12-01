@@ -82,14 +82,20 @@ class AnalyseTrr():
         # note that this should be seconds
         self.dummy_tauc = 5e-6
 
+        # this dictionary contains the transform information from a local geometry to
+        # the principle axis of the CSA tensor
+        # this is created by  calc_cosine_angles
+        self.csa_tensor_transform = None
+
     def write_diffusion_trace(self, params, file):
 
         name = f"{self.path_prefix}_diffusion_rotacf_fit/{file}"
+        print(f'writing diffusion tensor to {name}')
         f = open(name, 'w')
         f.write(f"#component value error\ndx: {params['dx'].value} {params['dx'].stderr} dy: {params['dy'].value} {params['dy'].stderr} dz: {params['dz'].value} {params['dz'].stderr}")
         f.close()
 
-    def load_trr(self,):
+    def load_trr(self):
         '''
         load the trajectory
         '''
@@ -109,7 +115,6 @@ class AnalyseTrr():
         all_atom_res_ids = self.uni.atoms.residues.resids
 
         for i,j in zip(all_atom_res_ids, all_atom_res_types):
-
             if i not in self.resid2type:
                 self.resid2type[i] = j
 
@@ -142,7 +147,6 @@ class AnalyseTrr():
         '''
         atom1 = atom_names[0]
         atom2 = atom_names[1]
-
         files = glob.glob(f"{self.path_prefix}_rotacf/rotacf_block_*_1_{atom1}_1_{atom2}.xvg")
         return len(files) - 1
 
@@ -183,41 +187,92 @@ class AnalyseTrr():
 
         return atom_info
 
-    def calc_cosine_angles(self,atom_names, skip=1000):
+    def calc_cosine_angles(self,
+                        atom_names, 
+                        calc_csa_angles=True, 
+                        skip=1000, 
+                        calc_average_structure=True, 
+                        write_out_angles=False):
 
         # try calculating the principle axis with gromacs
         # then average them and determine all the angles and 
         # average those
 
-        def average_principle_axis(a):
+        # def average_principle_axis(a):
 
-            a = np.average(a,axis=0) 
-            a = a[1:4]
-            return a
+        #     a = np.average(a,axis=0) 
+        #     a = a[1:4]
+        #     return a
 
         # calculate average structure
         average_pdb = self.path_prefix+'_average.pdb'
 
-
-        gmx_command = f'{self.gmx} rmsf -f {self.xtc} -s {self.gro} -dt 1000 -ox {average_pdb} << EOF\n 0 \nEOF'
-        os.system(gmx_command)
+        if calc_average_structure == True:
+            gmx_command = f'{self.gmx} rmsf -f {self.xtc} -s {self.gro} -dt 1000 -ox {average_pdb} << EOF\n 0 \nEOF'
+            os.system(gmx_command)
 
         self.average_uni = md.Universe(average_pdb)
+
+        # here the larges axis is axis[2] this should be considered to be 'Dz' from the diffusion tensor
+        # or in the case of a sphereoid D||
         axis = self.average_uni.select_atoms('all').principal_axes()
+
+        #this file can be written out as a check if desired
+        if write_out_angles == True:
+            angles_out = open(self.path_prefix + '_dipolar_angles.dat', 'w')
+            
+            #write out the principle axis
+            pas_out = open(self.path_prefix + '_principle_axis.dat', 'w')
+            labels = ['large', 'middle', 'small']
+            for i,j in zip(axis, labels):
+                #this should go x,y,x
+                pas_out.write(f'{j} {i[0]:0.2f} {i[1]:0.2f} {i[2]:0.2f}\n')
+            pas_out.close()
 
         self.cosine_angles = {}
         atom_info = self.make_atom_pairs_list(atom_names)
 
+        # does the CSA have a different bond vector ? 
+        if self.csa_tensor_transform == None:
+            self.csa_tensor_transform = utils.read_csa_orientation_info()
+            self.csa_cosine_angles = {}
+
         for res1, res2, atom_name1, atom_name2 in atom_info:
 
-            atom1_poss = self.average_uni.select_atoms(f'resid {res1} and name {atom_name1}')[0].position
-            atom2_poss = self.average_uni.select_atoms(f'resid {res2} and name {atom_name2}')[0].position
+            atom1_sele = self.average_uni.select_atoms(f'resid {res1} and name {atom_name1}')[0]
+            atom2_sele = self.average_uni.select_atoms(f'resid {res2} and name {atom_name2}')[0]
+            atom1_resname = atom1_sele.resname[1]
+
+            atom1_poss = atom1_sele.position
+            atom2_poss = atom2_sele.position
             
-            vec = atom1_poss - atom2_poss
+            vec = atom2_poss - atom1_poss
             angs = mathFunc.cosine_angles(vec, axis)
 
             key = (res1, atom_name1, res2, atom_name2)
             self.cosine_angles[key] = list(angs)
+
+            if write_out_angles == True:
+
+                # explicit for my own understanding ...
+                angx = np.rad2deg(np.arccos(angs[0]))
+                angy = np.rad2deg(np.arccos(angs[1]))
+                angz = np.rad2deg(np.arccos(angs[2]))
+                angles_out.write(f'{res1}\t{atom_name1}\t{angx}\t{angy}\t{angz}\n')
+
+            if calc_csa_angles == True:
+                
+                # here we calculate all the CSA tensor angles 
+                # but I think we only need the cosine angles for d11 - Need to check
+                d_selected, (d11, d22, d33) = mathFunc.calc_csa_axis(res1, atom_name1, 
+                    self.csa_tensor_transform[atom1_resname][atom_name1], 
+                    self.average_uni)
+
+                csa_angs = mathFunc.cosine_angles(d_selected, axis)
+                self.csa_cosine_angles[key] = list(csa_angs)
+
+        if write_out_angles == True:
+            angles_out.close()
 
     def calc_rotacf(self, indx_file, atom_names, b=None, e=None, dt=None, xtc=None, timestep=2e-12):
         '''
@@ -298,7 +353,7 @@ class AnalyseTrr():
             self.calc_rotacf(indx_file, out_name_curr, atom_selection_pairs, b=i[0], e=i[1], xtc=xtc)
 
     
-    def extract_diffusion_rotacf(self, internal_dir, total_dir):
+    def extract_diffusion_rotacf(self, internal_dir, total_dir, plot_skip=int(1e3)):
         '''
         Here we divide the total correlation function by the internal correlation function 
         This should yeild a correlation function that describes only the diffusion and not 
@@ -307,6 +362,7 @@ class AnalyseTrr():
 
         internal_motion_files = glob.glob(internal_dir + '/rotacf*xvg')
         total_motion_files = glob.glob(total_dir + '/rotacf*xvg')
+        
         try:
             os.mkdir(f'{self.path_prefix}_diffusion_rotacf/')
         except FileExistsError:
@@ -317,7 +373,7 @@ class AnalyseTrr():
         except FileExistsError:
             pass
 
-        for internal_f in internal_motion_files:
+        for internal_f in tqdm(internal_motion_files):
 
             file = internal_f.split('/')[-1]
             total_f = total_dir + '/' + file
@@ -340,16 +396,22 @@ class AnalyseTrr():
                 internal_x = internal_x * 1e6
                 total_x = total_x * 1e6
 
-                plt.plot(internal_x, internal_y, label='internal')
-                plt.plot(total_x, total_y, label='total')
-                plt.plot(total_x, diffusion_y, label='diffusion')
-                plt.xlabel('time (ns)')
-                plt.ylabel('correlation')
-                plt.legend()
-                pdf_name = file.split('.')[0]+'.pdf'
-                plt.xscale('symlog')
-                
-                plt.close()
+                #this way of writing figures is more memory efficient
+                fig = plt.figure(num=1, clear=True)
+                ax = fig.add_subplot()
+                ax.plot(internal_x[::plot_skip], internal_y[::plot_skip], label='internal')
+                ax.plot(total_x[::plot_skip], total_y[::plot_skip], label='total')
+                ax.plot(total_x[::plot_skip], diffusion_y[::plot_skip], label='diffusion')
+                ax.set_xlabel('time (ns)')
+                ax.set_ylabel('correlation')
+                ax.legend()
+                pdf_name = f'{self.path_prefix}_diffusion_rotacf/' + file.split('.')[0]+'.pdf'
+                ax.set_xscale('symlog')
+                fig.savefig(pdf_name)
+                fig.clf()
+                plt.close(fig)
+
+
 
     def correlation_function(self, Params, x):
 
@@ -454,7 +516,7 @@ class AnalyseTrr():
 
         return (2./5.)*total
 
-    def fit_correlation_function(self,x,y, log_time_min=5e-13, log_time_max=5e-9, blocks=True):
+    def fit_correlation_function(self,x,y, log_time_min=5e-13, log_time_max=10e-9, blocks=True):
         '''
         This function fits an internal correlation function and also the corresponding spectral density
         function. To do this we assume that the there is an overall isotropic tumbling so we can use a
@@ -471,27 +533,26 @@ class AnalyseTrr():
         dummy_tauc = copy.deepcopy(self.dummy_tauc)
         correlation_function = self.correlation_function
 
-        def calc_jw(time, internal_corelations,):
+        # def calc_jw(time, internal_corelations,):
 
-            '''
-            This function is used to calculate an numerical spectral density function
-            here we assume an overall isotropic tumbling. In reality this is just a way to focus the fitting
-            on a region of interest.
+        #     '''
+        #     This function is used to calculate an numerical spectral density function
+        #     here we assume an overall isotropic tumbling. In reality this is just a way to focus the fitting
+        #     on a region of interest.
 
-            Here the spectral density is calculated numerically
-            '''
+        #     Here the spectral density is calculated numerically
+        #     '''
 
-            dt = time[1]-time[0]
-            tumbling = 0.2*(np.e**(-time/dummy_tauc))
-            total = tumbling * internal_corelations
+        #     dt = time[1]-time[0]
+        #     tumbling = 0.4*(np.e**(-time/dummy_tauc))
+        #     total = tumbling * internal_corelations
 
-            j_fft = scipy.fft.fft(total)*dt*2
-            j_fft = scipy.fft.fftshift(j_fft)
-            j_fft_freq = scipy.fft.fftfreq(len(time), d=dt)
-            j_fft_freq = scipy.fft.fftshift(j_fft_freq)
-            j_fft_freq = np.pi*j_fft_freq*2
-            return j_fft_freq, j_fft
-
+        #     j_fft = scipy.fft.fft(total)*dt*2
+        #     j_fft = scipy.fft.fftshift(j_fft)
+        #     j_fft_freq = scipy.fft.fftfreq(len(time), d=dt)
+        #     j_fft_freq = scipy.fft.fftshift(j_fft_freq)
+        #     j_fft_freq = np.pi*j_fft_freq*2
+        #     return j_fft_freq, j_fft
 
         def func2min(Params, x,y):
 
@@ -503,7 +564,7 @@ class AnalyseTrr():
 
             x = x
             dt = x[1]-x[0]
-            tumbling = 0.2*(np.e**(-x/dummy_tauc))
+            tumbling = 0.4*(np.e**(-x/dummy_tauc))
             total = tumbling * y
 
             j_fft = scipy.fft.fft(total)*dt*2
@@ -777,6 +838,7 @@ class AnalyseTrr():
 
 
             angs = self.cosine_angles[(res1, atom_name1, res2, atom_name2)]
+            csa_angs = self.csa_cosine_angles[(res1, atom_name1, res2, atom_name2)]
             rxy = PhysQ.bondlengths[atom_name1, atom_name2]
             spectral_density_key = (res1, atom_name1+','+atom_name2)
             params = spectrail_density_params[spectral_density_key]
@@ -797,19 +859,22 @@ class AnalyseTrr():
 
             spectral_density = self.spectral_density_anisotropic
             r1 = d2e.rates.r1_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
-                                cosine_angles = angs)
+                                cosine_angles = angs, csa_cosine_angles=csa_angs)
 
             r2 = d2e.rates.r2_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
-                                cosine_angles = angs)
+                                cosine_angles = angs, csa_cosine_angles=csa_angs)
             hetnoe = d2e.rates.noe_YX(params, spectral_density, fields,
                                rxy, x, r1, y='h', cosine_angles=angs)
             
             if write_out == True:
                 key = resname+str(res2)+atom_name2+'-'+resname+str(res1)+atom_name1
                 #print(res1, res2, atom_name1, atom_name2, write_out, key)
-                r1_out.write(f"{key} {r1}\n")
-                r2_out.write(f"{key} {r2}\n")
-                hetnoe_out.write(f"{key} {hetnoe}\n")
+                r1_str = ' '.join([str(a) for a in r1])
+                r2_str = ' '.join([str(a) for a in r2])
+                hetnoe_str = ' '.join([str(a) for a in hetnoe])
+                r1_out.write(f"{key} {r1_str}\n")
+                r2_out.write(f"{key} {r2_str}\n")
+                hetnoe_out.write(f"{key} {hetnoe_str}\n")
 
         if write_out == True:
             r1_out.close()
@@ -820,19 +885,19 @@ class AnalyseTrr():
                                       fields,x, y='h', blocks=False,dna=False, write_out=False, reduced_noe=False,
                                       error_filter=0.05, PhysQ=PhysQ, model="anisotropic", scale_model='default'):
     
-        def resid(params, values, errors, csa, bondlength, cosine_angles, spec_params, fields):
+        def resid(params, values, errors, csa, bondlength, cosine_angles, spec_params, fields, csa_cosine_angles):
 
             spec_den = self.spectral_density_anisotropic
             total = []
-            
-            for vali, erri, csai, bondlengthi, angi, speci in zip(values, errors, csa, bondlength, cosine_angles, spec_params):
+
+            for vali, erri, csai, bondlengthi, angi, speci, csa_angi in zip(values, errors, csa, bondlength, cosine_angles, spec_params, csa_cosine_angles):
                 speci['dx'] = params['dx']
                 speci['dy'] = params['dy']
                 speci['dz'] = params['dz']
 
-                model_r1 = d2e.rates.r1_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=angi)
-                model_r2 = d2e.rates.r2_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=angi)
-                
+                model_r1 = d2e.rates.r1_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=angi, csa_cosine_angles=csa_angi)
+                model_r2 = d2e.rates.r2_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=angi, csa_cosine_angles=csa_angi)
+
                 # use the reduced NOE in the fitting? This is to prevent the R1 being pressent twice in the fit 
                 # and alows the error in the R1 to be included in the error estimation for the hetNOE 
 
@@ -842,10 +907,9 @@ class AnalyseTrr():
                     model_noe = d2e.rates.r1_reduced_noe_YX(speci, spec_den, fields, bondlengthi, x, cosine_angles=angi)
 
                 model = np.array([model_r1,model_r2, model_noe])
-
-                #print(model, vali)
-
-                diffs = (model - vali.T[0])/erri
+                #print(model.shape, vali.shape,  erri)
+                diffs = (model - vali)/erri
+                
                 total.append(diffs)
 
             total = np.array(total).flatten()
@@ -870,6 +934,7 @@ class AnalyseTrr():
         csa = []
         bondlengths = []
         cosine_angles = []
+        csa_cosine_angles = []
         spectral_density_params = []
 
 
@@ -916,7 +981,7 @@ class AnalyseTrr():
                     #get the local correlation times but fitting r1, r2, and hetnoe 
                     current_values = np.array([r1[i], r2[i],hetnoe[i]])
                     values.append(current_values)
-                    current_errors = np.array([r1_err[i]/10, r2_err[i],hetnoe_err[i]])
+                    current_errors = np.array([r1_err[i], r2_err[i],hetnoe_err[i]])
                     errors.append(current_errors)
 
                     csa_key = (atom2_type, atom2_res_type)
@@ -925,12 +990,14 @@ class AnalyseTrr():
                     bond_length = PhysQ.bondlengths[bond_lengths_key]
                     bondlengths.append(bond_length)
 
-                    vec = strucUtils.get_bond_vector(self.uni,atom1_resid, atom1_type, atom2_resid, atom2_type)
+                    #vec = strucUtils.get_bond_vector(self.uni,atom1_resid, atom1_type, atom2_resid, atom2_type)
                     
                     #calculate the cosine angles. I am not sure how these should be ordered with 
                     #print(self.cosine_angles.keys())
                     angs = self.cosine_angles[ (int(atom2_resid), atom2_type, int(atom1_resid), atom1_type)]
+                    csa_angs = self.csa_cosine_angles[ (int(atom2_resid), atom2_type, int(atom1_resid), atom1_type)]
                     cosine_angles.append(angs)
+                    csa_cosine_angles.append(angs)
             
             except KeyError:
                 pass
@@ -942,7 +1009,7 @@ class AnalyseTrr():
             params.add('dy', min=0, value=1/(6*4e-9))
             params.add('dz', min=0, value=1/(6*4e-9))
 
-        elif model == 'spheroid':
+        elif model == 'sphereoid':
             params = Parameters()
             params.add('dx', min=0, value=1/(6*4e-9))
             params.add('dy', min=0, value=1/(6*4e-9), expr='dx')
@@ -968,8 +1035,78 @@ class AnalyseTrr():
             print('Model selected does not exist')
             sys.exit()
 
-        minner = Minimizer(resid, params, fcn_args=(values, errors, csa, bondlengths, cosine_angles, spectral_density_params, fields))
+        minner = Minimizer(resid, params, fcn_args=(values, errors, csa, bondlengths, cosine_angles, 
+                           spectral_density_params, fields, csa_cosine_angles))
         result = minner.minimize()
         res_params = result.params
         report_fit(result)
+
+        diso = (res_params['dx'].value + res_params['dy'].value + res_params['dz'].value)/3
+        iso_tc = 1/(6*diso)
+        print(f'isotropic tau c: {iso_tc * 1e9:0.2} ns' )
         self.write_diffusion_trace(res_params, "diffusion_tensor_fitted.dat")
+
+    def plot_spectral_densities(self,r1_file, spectral_density_file, diffusion_file,):
+        '''
+        This function calculates the spectral density for a single trajecotry. 
+        https://pubs.acs.org/doi/pdf/10.1021/ja001129b
+        '''
+
+        try:
+            os.mkdir(f'{self.path_prefix}_plot_spec_dens/')
+        except FileExistsError:
+            pass
+
+        # this is a pretty ugly way of doing things but maybe it will work for now ...
+        r1, _ = d2e.utils.read_nmr_relaxation_rate(r1_file)
+        dval, diffusion_errors = utils.read_diffusion_tensor(diffusion_file)
+        spectral_density_params_dict = utils.read_fitted_spectral_density(spectral_density_file)
+        for i in r1:
+
+            try:
+                # this try statement if you want to look at fewer atoms 
+                # need a better fix in future
+                check = False
+
+                # get the atom info earlier in the funtion that I originally thought 
+                atom1_letters, atom1_numbers, atom1_res_type, atom1_resid, atom1_type, \
+                atom2_letters, atom2_numbers, atom2_res_type, atom2_resid, atom2_type = utils.get_atom_info_from_rate_key(i)
+                nucleus_type = atom2_letters[1].lower()
+                atom_full_names = (atom2_letters[1] + atom2_numbers[1], atom1_letters[1] + atom1_numbers[1])
+
+                #key for the spectral density
+                spec_key = (int(atom1_numbers[0]), atom2_letters[1] + atom2_numbers[1]+','+atom1_letters[1] + atom1_numbers[1])
+                angs = self.cosine_angles[ (int(atom2_resid), atom2_type, int(atom1_resid), atom1_type)]
+
+                params = spectral_density_params_dict[spec_key]
+                params['dx'] = dval[0]
+                params['dy'] = dval[1]
+                params['dz'] = dval[2]
+
+                model_x = np.linspace(0.1, 2*np.pi*3e9+0.1, 200)-0.1
+                args = [model_x, angs[0], angs[1], angs[2]]
+                model_y = self.spectral_density_anisotropic(params, args)
+                name = f'{self.path_prefix}_plot_spec_dens/{atom1_resid}_{atom_full_names[0]}_{atom_full_names[1]}.pdf'
+                plt.plot(model_x, model_y)
+                
+                for field in (11.7467, 14.1, 18.7929, 23.4904):
+                    h = PhysQ.calc_omega('h', field)
+                    c = PhysQ.calc_omega('c', field)
+                    omegas = np.array([0, c, h-c, c + h, h])
+                    txt = ['J(0)', 'J(c)', 'J(h-c)', 'J(h+c)', 'J(h)']
+                    #print(omegas)
+                    args = [omegas, angs[0], angs[1], angs[2]]
+                    omega_model = self.spectral_density_anisotropic(params, args)
+                    plt.scatter(omegas, omega_model, label=str(field)+'T')
+
+                for i,j,k in zip(omegas, txt, omega_model):
+                    plt.text(i+0.2e9, k,j)
+                #plt.xscale('symlog')
+                plt.yscale('log')
+                plt.legend()
+                plt.savefig(name)
+                plt.close()
+
+            except KeyError:
+                pass
+
