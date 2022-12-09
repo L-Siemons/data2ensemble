@@ -274,7 +274,7 @@ class AnalyseTrr():
         if write_out_angles == True:
             angles_out.close()
 
-    def calc_rotacf(self, indx_file, atom_names, b=None, e=None, dt=None, xtc=None, timestep=2e-12):
+    def calc_rotacf(self, indx_file, atom_names, b=None, e=None, dt=None, xtc=None, timestep=2e-12, calc_csa_tcf=False, csa_tcf_skip=100):
         '''
         calculate the rotational correlation function using gromacs 
 
@@ -289,6 +289,7 @@ class AnalyseTrr():
         except FileExistsError:
             pass
 
+        atom_info = self.make_atom_pairs_list(atom_names)
         out_name = f'{self.path_prefix}_rotacf/rotacf.xvg'
         print('out name:', out_name)
         command = f'{self.gmx} rotacf -s {self.tpr} -f {xtc} -o {out_name}.xvg -n {indx_file} -P 2 -d -noaver -xvg none'
@@ -300,43 +301,85 @@ class AnalyseTrr():
         if dt != None:
             command = command + f' -dt {dt}'
         print(f'Running the command: \n {command}')
-        os.system(command)
+        # os.system(command)
 
-        print('reading %s'%(out_name))
-        xvg = open(out_name+'.xvg')
-        time = []
-        total = []
+        # print('reading %s'%(out_name))
+        # xvg = open(out_name+'.xvg')
+        # time = []
+        # total = []
 
-        data = []
-        time_check = False
-        for i in xvg.readlines():
-            s = i.split()
+        # data = []
+        # time_check = False
+        # for i in xvg.readlines():
+        #     s = i.split()
 
 
-            if s[0] == '&':
-                check = True
-                total.append(data)
-                data = []
-            else:
-                data.append(float(s[1]))
+        #     if s[0] == '&':
+        #         check = True
+        #         total.append(data)
+        #         data = []
+        #     else:
+        #         data.append(float(s[1]))
 
-                if time_check == False:
-                    time.append(float(s[0]))
+        #         if time_check == False:
+        #             time.append(float(s[0]))
 
-        print('time step', timestep)
-        time = timestep * np.array(time)
-        xvg.close()
-        total = np.array(total)
+        # print('time step', timestep)
+        # time = timestep * np.array(time)
+        # xvg.close()
+        # total = np.array(total)
 
-        atom_info = self.make_atom_pairs_list(atom_names)
-        for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(atom_info):
-            f = open(f'{self.path_prefix}_rotacf/rotacf'+f'_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg', 'w')
+        
+        # for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(atom_info):
+        #     f = open(f'{self.path_prefix}_rotacf/rotacf'+f'_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg', 'w')
 
-            for ti, coeffi in zip(time, total[indx]):
-                f.write(f'{ti} {coeffi}\n')
-            f.close()
+        #     for ti, coeffi in zip(time, total[indx]):
+        #         f.write(f'{ti} {coeffi}\n')
+        #     f.close()
 
-        os.remove(out_name+'.xvg')
+        # os.remove(out_name+'.xvg')
+
+        if calc_csa_tcf == True:
+            self.csa_cosine_angles_trr = {}
+
+            selections = {}
+            for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(atom_info):
+                selections[(res1, atom_name1)] = []
+
+            # currently this takes too long. I could make this shorter by using only a fraction of the points
+            # Maybe say every 50-100 points. This looks like it should decay slow enough to catch the main motions 
+            # inspected using gnuplot FTW 
+
+            # so here we calculate all the different axis directions 
+            # looking at the paper it seems we only need: D11 and D22 to calculate the spectral densities Jxx, Jyy and Jxy
+            # Chemical Shift Anisotropy Tensors of Carbonyl, Nitrogen, and Amide 
+            # Proton Nuclei in Proteins through Cross-Correlated Relaxation in NMR Spectroscopy
+
+            for ts in tqdm(self.uni.trajectory[::csa_tcf_skip]):
+                time = self.uni.trajectory.time
+
+                for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(atom_info):
+                    atom1_resname = self.resid2type[res1][1]
+
+                    d_selected, (d11, d22, d33) = mathFunc.calc_csa_axis(res1, atom_name1, 
+                                                        self.csa_tensor_transform[atom1_resname][atom_name1], 
+                                                        self.uni)
+
+                    selections[(res1, atom_name1)].append((time ,d11, d22, d33))
+
+            for i in selections:
+                out_name = f'{self.path_prefix}_rotacf/csa_rotacf_{i[0]}_{i[1]}.xvg'
+                f = open(out_name, 'w')
+                f.write('#time d11x d11y d11z d22x d22y d22z d33x d33y d33z')
+
+                for line in selections[i]:
+                    f.write(f'{line[0]} ')
+                    f.write(f'{line[1][0]} {line[1][1]} {line[1][2]} ')
+                    f.write(f'{line[2][0]} {line[2][1]} {line[2][2]} ')
+                    f.write(f'{line[3][0]} {line[3][1]} {line[3][2]}\n')
+
+                f.close()
+
 
     def calc_rotacf_segments(self,indx_file, atom_selection_pairs, seg_blocks, xtc=None):
         '''
