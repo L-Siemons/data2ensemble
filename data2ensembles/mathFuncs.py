@@ -146,6 +146,11 @@ def calc_csa_axis(resid, atomname, csa_orientations_info, uni):
         d11 = np.linalg.solve(local_system, d11_cosine_angles)
         d22 = np.linalg.solve(local_system, d22_cosine_angles)
         d33 = np.linalg.solve(local_system, d33_cosine_angles)
+
+        d11 = d11/np.linalg.norm(d11)
+        d22 = d22/np.linalg.norm(d22)
+        d33 = d33/np.linalg.norm(d33)
+
         d = (d11, d22,d33)
         d_selected_axis = d[int(csa_orientations_info[15])]
 
@@ -170,6 +175,11 @@ def calc_csa_axis(resid, atomname, csa_orientations_info, uni):
         # d33 is the same as z_local as the rotation does not affect it
         # I have defined it here to be explicit 
         d33 = z_local 
+
+        d11 = d11/np.linalg.norm(d11)
+        d22 = d22/np.linalg.norm(d22)
+        d33 = d33/np.linalg.norm(d33)
+        
         d = (d11, d22,d33)
         d_selected_axis = d[int(csa_orientations_info[7])]
 
