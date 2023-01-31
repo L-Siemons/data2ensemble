@@ -4,6 +4,8 @@ import data2ensembles.mathFuncs as mathFunc
 import data2ensembles.rates
 import data2ensembles as d2e
 import data2ensembles.structureUtils as strucUtils
+#import data2ensembles.csa_spec_dens as csa_spec_dens
+
 
 import os
 import numpy as np
@@ -87,6 +89,10 @@ class AnalyseTrr():
         # this is created by  calc_cosine_angles
         self.csa_tensor_transform = None
 
+        # to account for machine precision we might need to round some times 
+        # this should be a few orders of magnitude smaller than the time step in your trr
+        self.decimal_round = 15
+
     def write_diffusion_trace(self, params, file):
 
         name = f"{self.path_prefix}_diffusion_rotacf_fit/{file}"
@@ -117,8 +123,6 @@ class AnalyseTrr():
         for i,j in zip(all_atom_res_ids, all_atom_res_types):
             if i not in self.resid2type:
                 self.resid2type[i] = j
-
-
 
     def make_ndx_file(self, atom_info, index_name,supress=True):
         '''
@@ -274,7 +278,9 @@ class AnalyseTrr():
         if write_out_angles == True:
             angles_out.close()
 
-    def calc_rotacf(self, indx_file, atom_names, b=None, e=None, dt=None, xtc=None, timestep=2e-12, calc_csa_tcf=False, csa_tcf_skip=100):
+    def calc_rotacf(self, indx_file, atom_names, b=None, e=None, dt=None, xtc=None, 
+                    timestep=2e-12, calc_csa_tcf=False, csa_tcf_skip=100, 
+                    max_csa_ct_diff=30e-9, write_csa_pas=False):
         '''
         calculate the rotational correlation function using gromacs 
 
@@ -339,12 +345,17 @@ class AnalyseTrr():
 
         # os.remove(out_name+'.xvg')
 
+
+        # after coding this I feel like it should be its own function ...
         if calc_csa_tcf == True:
             self.csa_cosine_angles_trr = {}
 
             selections = {}
+            time_list = {}
+
             for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(atom_info):
                 selections[(res1, atom_name1)] = []
+                time_list[(res1, atom_name1)] = []
 
             # currently this takes too long. I could make this shorter by using only a fraction of the points
             # Maybe say every 50-100 points. This looks like it should decay slow enough to catch the main motions 
@@ -355,6 +366,7 @@ class AnalyseTrr():
             # Chemical Shift Anisotropy Tensors of Carbonyl, Nitrogen, and Amide 
             # Proton Nuclei in Proteins through Cross-Correlated Relaxation in NMR Spectroscopy
 
+            print('Collecting CSA Principle axis possitions:')
             for ts in tqdm(self.uni.trajectory[::csa_tcf_skip]):
                 time = self.uni.trajectory.time
 
@@ -365,21 +377,122 @@ class AnalyseTrr():
                                                         self.csa_tensor_transform[atom1_resname][atom_name1], 
                                                         self.uni)
 
-                    selections[(res1, atom_name1)].append((time ,d11, d22, d33))
+                    time_list[(res1, atom_name1)].append(time)
+                    selections[(res1, atom_name1)].append([d11, d22, d33])
 
-            for i in selections:
-                out_name = f'{self.path_prefix}_rotacf/csa_rotacf_{i[0]}_{i[1]}.xvg'
+            # def wite out the vectors
+            if write_csa_pas == True: 
+                for i in selections:
+                    out_name = f'{self.path_prefix}_rotacf/csa_pas_axis_{i[0]}_{i[1]}.xvg'
+                    f = open(out_name, 'w')
+                    f.write('#time d11x d11y d11z d22x d22y d22z d33x d33y d33z\n')
+
+                    for line in selections[i]:
+                        f.write(f'{line[0]} ')
+                        f.write(f'{line[0][0]} {line[0][1]} {line[0][2]} ')
+                        f.write(f'{line[1][0]} {line[1][1]} {line[1][2]} ')
+                        f.write(f'{line[2][0]} {line[2][1]} {line[2][2]}\n')
+
+                    f.close()
+
+            # calculate correlation functions for csa Axis xx and yy
+            # this can almost certainly be done in a faster way
+
+            # csa_ct_xx, csa_ct_yy, csa_ct_xy = csa_spec_dens.calc_csa_spectral_density(selections, time_list, self.path_prefix, max_csa_ct_diff)
+            csa_ct_xx = {}
+            csa_ct_yy = {}
+            csa_ct_xy = {}
+
+            print('Calculating C(t) for CSA principle axis:')
+            print(f'CSA c(t) cutoff is {max_csa_ct_diff}')
+            print(f'This is about {int(max_csa_ct_diff/timestep)} steps')
+            for i in tqdm(selections):
+
+                current = np.array(selections[i])
+                time_array = np.array(time_list[i])*timestep
+                d11 = np.array(current[:,1].astype(float))
+                d22 = np.array(current[:,2].astype(float))
+
+                # this assumes that the smallest time point is time_array[0]
+                # sanity check: are times in assending order, seems to be true!
+                #print('Are times in assending order:', np.all(time_array[:-1] <= time_array[1:]))
+                
+
+                time_diffs = time_array - time_array[0]
+                all_arrays, time_tot, cxx_tot, cyy_tot, cxy_tot  = [],[],[],[],[]
+                
+                time_array_len = len(time_array)
+
+                for time_i, d11_i, d22_i in zip(time_array, d11, d22):
+
+                    # make the t0 array
+                    time_dim = np.abs(time_array-time_i)
+                    mask = (time_dim < max_csa_ct_diff)
+                    mask_len = sum(mask)
+
+                    d11_constant = np.zeros((mask_len, 3)) + d11_i
+                    d22_constant = np.zeros((mask_len, 3)) + d22_i
+
+                    # this einsum should give a 1D np array where the 
+                    # each entry is the dot product - I hope this works!
+
+                    #print('LOK HERE ')
+                    #print(d11[mask])
+                    #print(d11[mask].shape, d11_constant.shape)
+                    
+                    cxx = np.einsum('ij,ij->i',d11_constant,d11[mask])
+                    cyy = np.einsum('ij,ij->i',d22_constant,d22[mask])
+                    cxy = np.einsum('ij,ij->i',d11_constant,d22[mask])
+
+                    #cxx = np.array([np.dot(m,k) for m,k in zip(d11_constant,d11)])
+                    #cyy = np.array([np.dot(m,k) for m,k in zip(d22_constant,d22)])
+                    #cxy = np.array([np.dot(m,k) for m,k in zip(d11_constant,d22)])
+
+                    # now apply the P2 part 
+                    cxx = 1.5*cxx**2 - 0.5
+                    cyy = 1.5*cyy**2 - 0.5
+                    cxy = 1.5*cxy**2 - 0.5
+
+                    time_tot.append(time_dim[mask])
+                    cxx_tot.append(cxx)
+                    cyy_tot.append(cyy)
+                    cxy_tot.append(cxy)
+
+                time_tot = np.concatenate(time_tot, axis=0)
+                cxx_tot = np.concatenate(cxx_tot, axis=0)
+                cyy_tot = np.concatenate(cyy_tot, axis=0)
+                cxy_tot = np.concatenate(cxy_tot, axis=0)
+
+                # so noe we want to sum according to the 
+                # here we have a rounding step due to machine precision in the times 
+                # this will remove the noise in the c(t) when we plot it later
+                time_tot_round = np.around(time_tot, decimals=self.decimal_round)
+                dts, idx, count = np.unique(time_tot_round, return_counts=True, return_inverse=True)
+                cur_ct_xx = np.bincount(idx, cxx_tot)/count
+                cur_ct_yy = np.bincount(idx, cyy_tot)/count
+                cur_ct_xy = np.bincount(idx, cxy_tot)/count
+
+                # this assumes that the smallest time point is time_array[0]
+                # sanity check: are times in assending order, seems to be true!
+                # print('Are times in assending order:', np.all(dts[:-1] <= dts[1:]))
+                
+                # save the correlation functions.
+                csa_ct_xx[i] = [dts, cur_ct_xx]
+                csa_ct_yy[i] = [dts, cur_ct_yy]
+                csa_ct_xy[i] = [dts, cur_ct_xy]
+
+            #write out! 
+            all_strings = ''
+            for i in csa_ct_xx:
+
+                out_name = f'{self.path_prefix}_rotacf/csa_ct_{i[0]}_{i[1]}.xvg'
                 f = open(out_name, 'w')
-                f.write('#time d11x d11y d11z d22x d22y d22z d33x d33y d33z')
 
-                for line in selections[i]:
-                    f.write(f'{line[0]} ')
-                    f.write(f'{line[1][0]} {line[1][1]} {line[1][2]} ')
-                    f.write(f'{line[2][0]} {line[2][1]} {line[2][2]} ')
-                    f.write(f'{line[3][0]} {line[3][1]} {line[3][2]}\n')
-
+                f.write('#time xx yy xy\n')
+                string = ''.join([ f'{q} {w} {e} {r}\n' for q,w,e,r in zip(csa_ct_xx[i][0], csa_ct_xx[i][1], csa_ct_yy[i][1], csa_ct_xy[i][1])])
+                #print(string)
+                f.write(string)
                 f.close()
-
 
     def calc_rotacf_segments(self,indx_file, atom_selection_pairs, seg_blocks, xtc=None):
         '''
@@ -658,7 +771,7 @@ class AnalyseTrr():
     
     def fit_all_correlation_functions(self,
         atom_names, time_threshold=10e-9,
-        log_time_min=50, log_time_max=5000,blocks=True):
+        log_time_min=50, log_time_max=5000,blocks=True, calc_csa_tcf=False):
 
         atom_info = self.make_atom_pairs_list(atom_names)
         atom1 = atom_names[0][0]
@@ -724,6 +837,7 @@ class AnalyseTrr():
                 plt.legend()
                 plt.xscale('symlog')
                 plt.savefig(f'{self.path_prefix}_fits/rot_acf_{block}_{res1}_{atom_name1}.pdf')
+                plt.clf()
                 plt.close()
                 #residues_pbar.update()
 
@@ -735,6 +849,54 @@ class AnalyseTrr():
                 line = f'{res1}:{atom_name1},{atom_name2}:{slong}:{amps}:{times}\n'
                 params_out.write(line)
                 params_out.flush()
+
+                if calc_csa_tcf == True:
+
+                    csa_name = f'{self.path_prefix}_rotacf/csa_ct_{res1}_{atom_name1}.xvg'
+                    print(csa_name)
+                    temp = self.read_gmx_xvg(csa_name)
+                    time = temp.T[0]
+                    ct_xx = temp.T[1][time < time_threshold]
+                    ct_yy = temp.T[2][time < time_threshold]
+                    ct_xy = temp.T[3][time < time_threshold]
+                    time = time[time < time_threshold]
+
+                    # fit the CSA c(t)s
+                    result_xx = self.fit_correlation_function(time,ct_xx)
+                    result_yy = self.fit_correlation_function(time,ct_yy)
+                    result_xy = self.fit_correlation_function(time,ct_xy)
+                    
+                    # make vaues dicts
+                    values_xx = result_xx.params.valuesdict()
+                    values_yy = result_yy.params.valuesdict()
+                    values_xy = result_xy.params.valuesdict()
+
+                    # make the models
+                    x_model = np.linspace(0, max(x), 10000)
+                    xx_model = self.correlation_function(values_xx, x_model)
+                    yy_model = self.correlation_function(values_yy, x_model)
+                    xy_model = self.correlation_function(values_xy, x_model)
+
+                    #plot xx
+
+                    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(9, 3), ) 
+
+                    ax1.scatter(time, ct_xx, label='ct_xx', color='C1',s=2)
+                    ax1.plot(x_model, xx_model, color='C2')
+
+                    ax2.scatter(time, ct_yy, label='ct_yy', color='C1',s=2)
+                    ax2.plot(x_model, yy_model, color='C2')
+
+                    ax3.scatter(time, ct_xy, label='ct_xy', color='C1',s=2)
+                    ax3.plot(x_model, xy_model, color='C2')
+
+                    ax1.legend()
+                    ax2.legend()
+                    ax3.legend()
+                    
+                    plt.savefig(f'{self.path_prefix}_fits/rot_acf_{block}_{res1}_{atom_name1}_csa_ct.pdf')
+                    plt.clf()
+                    plt.close()
 
             #locks_pbar.update()
         #manager.stop()
