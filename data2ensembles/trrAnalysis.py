@@ -307,43 +307,43 @@ class AnalyseTrr():
         if dt != None:
             command = command + f' -dt {dt}'
         print(f'Running the command: \n {command}')
-        # os.system(command)
+        os.system(command)
 
-        # print('reading %s'%(out_name))
-        # xvg = open(out_name+'.xvg')
-        # time = []
-        # total = []
+        print('reading %s'%(out_name))
+        xvg = open(out_name+'.xvg')
+        time = []
+        total = []
 
-        # data = []
-        # time_check = False
-        # for i in xvg.readlines():
-        #     s = i.split()
+        data = []
+        time_check = False
+        for i in xvg.readlines():
+            s = i.split()
 
 
-        #     if s[0] == '&':
-        #         check = True
-        #         total.append(data)
-        #         data = []
-        #     else:
-        #         data.append(float(s[1]))
+            if s[0] == '&':
+                check = True
+                total.append(data)
+                data = []
+            else:
+                data.append(float(s[1]))
 
-        #         if time_check == False:
-        #             time.append(float(s[0]))
+                if time_check == False:
+                    time.append(float(s[0]))
 
-        # print('time step', timestep)
-        # time = timestep * np.array(time)
-        # xvg.close()
-        # total = np.array(total)
+        print('time step', timestep)
+        time = timestep * np.array(time)
+        xvg.close()
+        total = np.array(total)
 
         
-        # for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(atom_info):
-        #     f = open(f'{self.path_prefix}_rotacf/rotacf'+f'_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg', 'w')
+        for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(atom_info):
+            f = open(f'{self.path_prefix}_rotacf/rotacf'+f'_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg', 'w')
 
-        #     for ti, coeffi in zip(time, total[indx]):
-        #         f.write(f'{ti} {coeffi}\n')
-        #     f.close()
+            for ti, coeffi in zip(time, total[indx]):
+                f.write(f'{ti} {coeffi}\n')
+            f.close()
 
-        # os.remove(out_name+'.xvg')
+        os.remove(out_name+'.xvg')
 
 
         # after coding this I feel like it should be its own function ...
