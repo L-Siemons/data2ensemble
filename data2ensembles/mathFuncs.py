@@ -12,14 +12,14 @@ def cos_square(a):
 
 def cosine_angles(vec, axis):
 
-    p3,p2,p1 = axis
+    p1,p2,p3 = axis
 
     mag = np.linalg.norm(vec)
     ex = np.dot(vec, p1)/mag
     ey = np.dot(vec, p2)/mag
     ez = np.dot(vec, p3)/mag
 
-    print('CHECK THE ORDER OF EX, EY,EZ')
+    #print('CHECK THE ORDER OF EX, EY,EZ')
     return ex,ey,ez
 
 def delta2k(da, diso, L2):
