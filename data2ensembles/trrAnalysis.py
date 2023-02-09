@@ -190,6 +190,7 @@ class AnalyseTrr():
     def calc_cosine_angles(self,
                         atom_names, 
                         calc_csa_angles=True, 
+                        csa_ignore_list=[], 
                         skip=1000, 
                         calc_average_structure=True, 
                         write_out_angles=False):
@@ -260,7 +261,18 @@ class AnalyseTrr():
                 angz = np.rad2deg(np.arccos(angs[2]))
                 angles_out.write(f'{res1}\t{atom_name1}\t{angx}\t{angy}\t{angz}\n')
 
+
+            if [atom_name1, atom_name2] in csa_ignore_list:
+                csa_atom_chcek = False
+            else:
+                csa_atom_chcek = True
+
             if calc_csa_angles == True:
+                csa_calc_angles_check = True
+            else:
+                csa_calc_angles_check = True
+
+            if csa_atom_chcek and csa_calc_angles_check:
                 
                 # here we calculate all the CSA tensor angles 
                 # but I think we only need the cosine angles for d11 - Need to check
@@ -301,43 +313,43 @@ class AnalyseTrr():
         if dt != None:
             command = command + f' -dt {dt}'
         print(f'Running the command: \n {command}')
-        # os.system(command)
+        os.system(command)
 
-        # print('reading %s'%(out_name))
-        # xvg = open(out_name+'.xvg')
-        # time = []
-        # total = []
+        print('reading %s'%(out_name))
+        xvg = open(out_name+'.xvg')
+        time = []
+        total = []
 
-        # data = []
-        # time_check = False
-        # for i in xvg.readlines():
-        #     s = i.split()
+        data = []
+        time_check = False
+        for i in xvg.readlines():
+            s = i.split()
 
 
-        #     if s[0] == '&':
-        #         check = True
-        #         total.append(data)
-        #         data = []
-        #     else:
-        #         data.append(float(s[1]))
+            if s[0] == '&':
+                check = True
+                total.append(data)
+                data = []
+            else:
+                data.append(float(s[1]))
 
-        #         if time_check == False:
-        #             time.append(float(s[0]))
+                if time_check == False:
+                    time.append(float(s[0]))
 
-        # print('time step', timestep)
-        # time = timestep * np.array(time)
-        # xvg.close()
-        # total = np.array(total)
+        print('time step', timestep)
+        time = timestep * np.array(time)
+        xvg.close()
+        total = np.array(total)
 
         
-        # for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(atom_info):
-        #     f = open(f'{self.path_prefix}_rotacf/rotacf'+f'_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg', 'w')
+        for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(atom_info):
+            f = open(f'{self.path_prefix}_rotacf/rotacf'+f'_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg', 'w')
 
-        #     for ti, coeffi in zip(time, total[indx]):
-        #         f.write(f'{ti} {coeffi}\n')
-        #     f.close()
+            for ti, coeffi in zip(time, total[indx]):
+                f.write(f'{ti} {coeffi}\n')
+            f.close()
 
-        # os.remove(out_name+'.xvg')
+        os.remove(out_name+'.xvg')
 
         if calc_csa_tcf == True:
             self.csa_cosine_angles_trr = {}
@@ -831,7 +843,7 @@ class AnalyseTrr():
         self.write_diffusion_trace(res_params, "diffusion_tensor.dat")
     
     
-    def calculate_r1_r2_hetnoe(self, atom_names, diffusion_file, fields,x, y='h', blocks=False,dna=False, write_out=False, prefix=''):
+    def calculate_r1_r2_hetnoe(self, atom_names, diffusion_file, fields,x, y='h', blocks=False,dna=False, write_out=False, prefix='', ignore_atoms=[]):
         '''
         This function calculate r1 r2 and hetnoe at high field for a X-Y spin system
         '''
@@ -871,7 +883,17 @@ class AnalyseTrr():
             hetnoe_out = open(f'{self.path_prefix}_calculated_relaxation_rates/{prefix}hetnoe.dat', 'w')
             hetnoe_out.write('#header bondName \n' )
 
+        # select only the atoms we want
+        # probably should make a feature to merge this with the CSA ignore list
+        
+        reduced_atom_info = []
         for res1, res2, atom_name1, atom_name2 in atom_info:
+
+            if [atom_name1, atom_name2] not in ignore_atoms:
+                reduced_atom_info.append([res1, res2, atom_name1, atom_name2])
+
+
+        for res1, res2, atom_name1, atom_name2 in reduced_atom_info:
 
             #write out location
             if blocks == True:
