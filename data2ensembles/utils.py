@@ -151,7 +151,12 @@ def read_diffusion_tensor(file):
     s = line.split()
     #given in dx,dy,dz
     values = [float(s[a]) for a in [1,4,7]]
-    errors = [float(s[a]) for a in [2,5,7]]
+
+    try:
+        errors = [float(s[a]) for a in [2,5,7]]
+    except ValueError:
+        print('errors are not floats - might be NONE')
+        errors = [s[a] for a in [2,5,7]]
     return values, errors
 
 def read_csa_orientation_info():
