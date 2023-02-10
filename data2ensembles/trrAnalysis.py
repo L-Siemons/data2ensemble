@@ -569,27 +569,31 @@ class AnalyseTrr():
 
 
 
-    def correlation_function(self, Params, x):
+    def correlation_function(self, Params, x, theta=0):
 
         '''
         An internal correlation function. This is the same one that is used
         by Kresten in the absurder paper.
         '''
 
-        total = Params['S_long']
+        total = 0
         for i in range(self.curve_count):
             i = i+1
             amp = 'amp_%i'%(i)
             time = 'time_%i'%(i)
-
             total = total + Params[amp]*(np.e**(-1*x/Params[time]))
 
+        #this is for the vectors that are not aligned with eachother
+        if theta != 0:
+            total = (1.5*np.cos(theta)**2 - 0.5)*total
+
+        total = total + Params['S_long']
         return total
 
-    def spectral_density_fuction(self,params, omega, dummy_tauc=5e-6):
+    def spectral_density_fuction(self,params, omega, dummy_tauc=5e-6, theta=0):
 
         term2 = params['S_long']*dummy_tauc/(1+(omega*dummy_tauc)**2)
-        total = term2
+        total = 0
 
         for i in range(self.curve_count):
             i = i + 1
@@ -603,7 +607,27 @@ class AnalyseTrr():
             term1 = ampi*tau_eff/(1+(omega*tau_eff)**2)
             total = total + term1
 
+        #this is incase the vectors are not aligned
+        if theta != 0:
+            total = (1.5*np.cos(theta)**2 - 0.5)*total
+
+        total = total + term2 
+
         return (2/5.)*total
+
+    def spectral_density_fuction_numerical(self, x,dummy_tauc, y):
+            #x = x
+            dt = x[1]-x[0]
+            tumbling = 0.2*(np.e**(-x/dummy_tauc))
+            total = tumbling * y
+
+            j_fft = scipy.fft.fft(total)*dt*2
+            j_fft = scipy.fft.fftshift(j_fft)
+            j_fft = j_fft.real #* 2/5 # seems like this factor is needed for normalising, not sure why ...
+            j_fft_freq = scipy.fft.fftfreq(len(x), d=dt)
+            j_fft_freq = scipy.fft.fftshift(j_fft_freq)
+            j_fft_freq = np.pi*j_fft_freq*2
+            return j_fft_freq, j_fft
     
     def correlation_function_anisotropic(self, x, diffusion_tensor_components, angles):
         '''
@@ -672,7 +696,7 @@ class AnalyseTrr():
 
         return (2./5.)*total
 
-    def fit_correlation_function(self,x,y, log_time_min=5e-13, log_time_max=10e-9, blocks=True):
+    def fit_correlation_function(self,x,y, log_time_min=5e-13, log_time_max=10e-9, blocks=True, theta=0):
         '''
         This function fits an internal correlation function and also the corresponding spectral density
         function. To do this we assume that the there is an overall isotropic tumbling so we can use a
@@ -710,26 +734,15 @@ class AnalyseTrr():
         #     j_fft_freq = np.pi*j_fft_freq*2
         #     return j_fft_freq, j_fft
 
-        def func2min(Params, x,y):
+        def func2min(Params, x,y, theta):
 
             '''
             The function we want to minimize. The fitting is carried out both in s and hz.
             '''
 
-            correlation_diff =  y - correlation_function(Params, x)
-
-            x = x
-            dt = x[1]-x[0]
-            tumbling = 0.4*(np.e**(-x/dummy_tauc))
-            total = tumbling * y
-
-            j_fft = scipy.fft.fft(total)*dt*2
-            j_fft = scipy.fft.fftshift(j_fft)
-            j_fft = j_fft.real
-            j_fft_freq = scipy.fft.fftfreq(len(x), d=dt)
-            j_fft_freq = scipy.fft.fftshift(j_fft_freq)
-            j_fft_freq = np.pi*j_fft_freq*2
-            spec_difference = j_fft - self.spectral_density_fuction(Params, j_fft_freq,  dummy_tauc = dummy_tauc)
+            correlation_diff =  y - correlation_function(Params, x, theta=theta)
+            j_fft_freq, j_fft = self.spectral_density_fuction_numerical(x,dummy_tauc, y)
+            spec_difference = j_fft - self.spectral_density_fuction(Params, j_fft_freq,  dummy_tauc = dummy_tauc, theta=theta)
 
             all_diffs = np.concatenate([spec_difference, correlation_diff])
             return all_diffs.flatten()
@@ -738,7 +751,13 @@ class AnalyseTrr():
         # create a set of Parameters
         Params = Parameters()
         s_guess = np.mean(y[int(len(y)*0.75):])
-        Params.add('S_long', value=s_guess, min=0, max=1)
+
+        # allow for a negative S is theta is not 0
+        # woohoo this worked! 
+        if theta == 0:
+            Params.add('S_long', value=s_guess, min=0, max=1)
+        else:
+            Params.add('S_long', value=s_guess, min=-1, max=1)
 
         log_times = np.geomspace(log_time_min, log_time_max, curve_count)
         amp_list = []
@@ -763,7 +782,7 @@ class AnalyseTrr():
         # for i in Params:
         #     print(i, Params[i].value)
         # do fit, here with the default leastsq algorithm
-        minner = Minimizer(func2min, Params, fcn_args=(x, y))
+        minner = Minimizer(func2min, Params, fcn_args=(x, y, theta))
         result = minner.minimize()
         report_fit(result)
         return result
@@ -831,14 +850,30 @@ class AnalyseTrr():
                 x_model = np.linspace(0, max(x), 10000)
                 y_model = self.correlation_function(values, x_model)
 
+                # calculate numerical spectral density 
+                j_fft_freq, j_fft = self.spectral_density_fuction_numerical(x,self.dummy_tauc, y)
+                freq_max = np.max(abs(j_fft_freq))
+                model_omega = j_fft_freq
+                xx_j_model = self.spectral_density_fuction(values, model_omega, dummy_tauc=self.dummy_tauc, theta=0)
+
                 #print('plotting...')
-                plt.plot(x,y, label='raw acf')
-                plt.plot(x_model, y_model, label='fit')
-                plt.legend()
-                plt.xscale('symlog')
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6, 3), ) 
+                ax1.plot(x,y, label='raw acf')
+                ax1.plot(x_model, y_model, label='fit')
+                ax1.legend()
+
+
+                # 
+                ax2.scatter(j_fft_freq,j_fft, label='raw acf', c='C1')
+                ax2.plot(model_omega, xx_j_model, label='fit', c='C2')
+                ax2.legend()    
+
                 plt.savefig(f'{self.path_prefix}_fits/rot_acf_{block}_{res1}_{atom_name1}.pdf')
+                # plt.show()
+                # os.exit()
                 plt.clf()
                 plt.close()
+
                 #residues_pbar.update()
 
                 amps = [str(values['amp_%i'%(i+1)]) for i in range(self.curve_count)]
@@ -864,7 +899,7 @@ class AnalyseTrr():
                     # fit the CSA c(t)s
                     result_xx = self.fit_correlation_function(time,ct_xx)
                     result_yy = self.fit_correlation_function(time,ct_yy)
-                    result_xy = self.fit_correlation_function(time,ct_xy)
+                    result_xy = self.fit_correlation_function(time,ct_xy, theta=np.pi/2)
                     
                     # make vaues dicts
                     values_xx = result_xx.params.valuesdict()
@@ -875,12 +910,23 @@ class AnalyseTrr():
                     x_model = np.linspace(0, max(x), 10000)
                     xx_model = self.correlation_function(values_xx, x_model)
                     yy_model = self.correlation_function(values_yy, x_model)
-                    xy_model = self.correlation_function(values_xy, x_model)
+                    xy_model = self.correlation_function(values_xy, x_model, theta=np.pi/2)
 
-                    #plot xx
+                    #make the model spectral density, numerical points,
+                    xx_j_fft_freq, xx_j_fft = self.spectral_density_fuction_numerical(time,self.dummy_tauc, ct_xx)
+                    yy_j_fft_freq, yy_j_fft = self.spectral_density_fuction_numerical(time,self.dummy_tauc, ct_yy)
+                    xy_j_fft_freq, xy_j_fft = self.spectral_density_fuction_numerical(time,self.dummy_tauc, ct_xy)
 
-                    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(9, 3), ) 
+                    # model for the spectral density
+                    omega_model = np.linspace(min(xx_j_fft_freq), max(xx_j_fft_freq), 1000)
+                    xx_j_model = self.spectral_density_fuction(values_xx, omega_model, dummy_tauc=5e-6, theta=0)
+                    yy_j_model = self.spectral_density_fuction(values_yy, omega_model, dummy_tauc=5e-6, theta=0)
+                    xy_j_model = self.spectral_density_fuction(values_xy, omega_model, dummy_tauc=5e-6, theta=0)
 
+                    #plot
+                    fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(2, 3, figsize=(9, 3), ) 
+
+                    # correlation functions
                     ax1.scatter(time, ct_xx, label='ct_xx', color='C1',s=2)
                     ax1.plot(x_model, xx_model, color='C2')
 
@@ -890,6 +936,19 @@ class AnalyseTrr():
                     ax3.scatter(time, ct_xy, label='ct_xy', color='C1',s=2)
                     ax3.plot(x_model, xy_model, color='C2')
 
+                    #spectral densities
+                    ax4.scatter(xx_j_fft_freq, xx_j_fft, label='j_xx', color='C1',s=2)
+                    ax4.plot(omega_model, xx_j_model, color='C2')
+                    ax4.set_yscale('symlog')
+
+                    ax5.scatter(yy_j_fft_freq, yy_j_fft, label='j_yy', color='C1',s=2)
+                    ax5.plot(omega_model, yy_j_model, color='C2')
+                    ax5.set_yscale('symlog')
+
+                    ax6.scatter(xy_j_fft_freq, xy_j_fft, label='j_xy', color='C1',s=2)
+                    ax6.plot(omega_model, xy_j_model, color='C2')
+                    ax6.set_yscale('symlog')
+                    
                     ax1.legend()
                     ax2.legend()
                     ax3.legend()
