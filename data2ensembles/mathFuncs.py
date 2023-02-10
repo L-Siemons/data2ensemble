@@ -13,7 +13,6 @@ def cos_square(a):
 def cosine_angles(vec, axis):
 
     p1,p2,p3 = axis
-
     mag = np.linalg.norm(vec)
     ex = np.dot(vec, p1)/mag
     ey = np.dot(vec, p2)/mag
