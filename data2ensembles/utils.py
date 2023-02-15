@@ -39,6 +39,23 @@ class PhysicalQuantities(object):
                     self.csa_isotropic[key] = float(s[2])
         file.close()
 
+        # read in the anisotropic CSA
+        self.csa_anisotropic = {}
+        file = pkg_resources.resource_filename('data2ensembles', 'dat/csa_anisotropic.txt')
+        file = open(file, 'r')
+        for i in file.readlines():
+            if i[0] != '#':
+                s = i.split('#')[0].split()
+                if len(s) == 5:
+                    key = (s[0], s[1])
+
+                    csa_values = [float(s[a]) for a in [2,3,4]]
+                    if float(max(csa_values)) > 1e-2: 
+                        print('WARNING: The csa is rather large, did you miss a e-6?')
+                        print(csa_values)
+                    self.csa_anisotropic[key] = csa_values
+        file.close()
+
         #def read in bond lengths
         self.bondlengths = {}
         file = pkg_resources.resource_filename('data2ensembles', 'dat/dft_bond_lengths_v2.dat')
@@ -86,6 +103,20 @@ class PhysicalQuantities(object):
         omega = self.calc_omega(x, field)
         csa_total = omega*self.csa_isotropic[csa_atom_name]/np.sqrt(3)
         return csa_total
+
+    def calc_aniso_csa_prefactor(self, field, x, csa_atom_name):
+        '''
+        Calculate the isotropic CSA
+        field - magnetic field in tesla
+        x - atom
+        csa_atom_name - atom name in the csa dictionary
+        '''
+
+        # the factor of 2pi is needed to keep it in omega!
+        omega = self.calc_omega(x, field)
+        csa_total = (2/6)*omega**2
+        return csa_total
+
 
 def read_nmr_relaxation_rate(file):
         print(f'Reading in data from {file}')
