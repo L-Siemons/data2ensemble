@@ -19,7 +19,7 @@ def cosine_angles(vec, axis):
     ez = np.dot(vec, p3)/mag
 
     #print('CHECK THE ORDER OF EX, EY,EZ')
-    return ex,ey,ez
+    return [ex,ey,ez]
 
 def delta2k(da, diso, L2):
     top = da - diso
