@@ -169,6 +169,28 @@ class AnalyseTrr():
         fi.close()
         return np.array(values)
 
+    def read_csa_spectra_density_params(self, blocks=False):
+
+        if blocks == False:
+            csa_xx_spec_file = self.path_prefix + '_fit_params/internal_csa_xx_correlations_0.dat'
+            csa_yy_spec_file = self.path_prefix + '_fit_params/internal_csa_yy_correlations_0.dat'
+            csa_xy_spec_file = self.path_prefix + '_fit_params/internal_csa_xy_correlations_0.dat'
+        else:
+            print('LUCAS YOU NEED TO CODE THIS!')
+
+        csa_xx_spectral_density_params = utils.read_fitted_spectral_density(csa_xx_spec_file)
+        csa_yy_spectral_density_params = utils.read_fitted_spectral_density(csa_yy_spec_file)
+        csa_xy_spectral_density_params = utils.read_fitted_spectral_density(csa_xy_spec_file)
+
+        return csa_xx_spectral_density_params, csa_yy_spectral_density_params, csa_xy_spectral_density_params
+
+    def add_diffution_spectral_density_params(self, params, diffusion):
+
+        for indx, i in enumerate(['dx', 'dy', 'dz']):
+            params[i] = diffusion[indx]
+
+        return params
+
     def make_atom_pairs_list(self, atoms):
         '''
         Many functions want to iterate over residues and atom types. This function created this list
@@ -272,8 +294,8 @@ class AnalyseTrr():
                     self.csa_tensor_transform[atom1_resname][atom_name1], 
                     self.average_uni)
 
-                csa_angs = mathFunc.cosine_angles(d_selected, axis)
-                self.csa_cosine_angles[key] = list(csa_angs)
+                # in this case we provide all of them here: 
+                self.csa_cosine_angles[key] = [mathFunc.cosine_angles(a, axis) for a in (d11, d22, d33)]
 
         if write_out_angles == True:
             angles_out.close()
@@ -681,18 +703,22 @@ class AnalyseTrr():
             term1_total = term1_top/term1_bottom
             total = total + term1_total
 
-            #now we do the internal motions 
-            for i in range(self.curve_count):
-                i = i + 1
+            # this check means we dont do the sum for internal motions when it is not there 
+            # it also means we can just switch off the internal motions by setting S_long = 1
+            # and not worry about the params['amp_%i'%(i)] terms.
+            if params['S_long'] != 1:
+                #now we do the internal motions 
+                for i in range(self.curve_count):
+                    i = i + 1
 
-                #correction for fitting the correlation times in ps
-                tau_internal = params['time_%i'%(i)]
-                amp_internal = params['amp_%i'%(i)]
+                    #correction for fitting the correlation times in ps
+                    tau_internal = params['time_%i'%(i)]
+                    amp_internal = params['amp_%i'%(i)]
 
-                tau_eff = taui*tau_internal/(tau_internal+taui)
-                term_internal = amp_internal*ampi*tau_eff/(1+(omega*tau_eff)**2)
-                
-                total = total + term_internal
+                    tau_eff = taui*tau_internal/(tau_internal+taui)
+                    term_internal = amp_internal*ampi*tau_eff/(1+(omega*tau_eff)**2)
+                    
+                    total = total + term_internal
 
         return (2./5.)*total
 
@@ -792,6 +818,18 @@ class AnalyseTrr():
         atom_names, time_threshold=10e-9,
         log_time_min=50, log_time_max=5000,blocks=True, calc_csa_tcf=False):
 
+        def write_line_to_params_files(values, file, curve_count=self.curve_count):
+
+            amps = [str(values['amp_%i'%(i+1)]) for i in range(curve_count)]
+            amps = ','.join(amps)
+            times = [str(values['time_%i'%(i+1)]) for i in range(curve_count)]
+            times = ','.join(times)
+            slong = values['S_long']
+            line = f'{res1}:{atom_name1},{atom_name2}:{slong}:{amps}:{times}\n'
+            file.write(line)
+            file.flush()
+
+
         atom_info = self.make_atom_pairs_list(atom_names)
         atom1 = atom_names[0][0]
         atom2 = atom_names[0][1]
@@ -823,6 +861,11 @@ class AnalyseTrr():
         for block in range(block_count):
 
             params_out = open(f'{self.path_prefix}_fit_params/internal_correlations_{block}.dat', 'w')
+            if calc_csa_tcf == True:
+                params_out_csa_xx = open(f'{self.path_prefix}_fit_params/internal_csa_xx_correlations_{block}.dat', 'w')
+                params_out_csa_yy = open(f'{self.path_prefix}_fit_params/internal_csa_yy_correlations_{block}.dat', 'w')
+                params_out_csa_xy = open(f'{self.path_prefix}_fit_params/internal_csa_xy_correlations_{block}.dat', 'w')
+
             params_out.write('# residue:atoms:S2:amps:times\n')
             
             
@@ -875,15 +918,7 @@ class AnalyseTrr():
                 plt.close()
 
                 #residues_pbar.update()
-
-                amps = [str(values['amp_%i'%(i+1)]) for i in range(self.curve_count)]
-                amps = ','.join(amps)
-                times = [str(values['time_%i'%(i+1)]) for i in range(self.curve_count)]
-                times = ','.join(times)
-                slong = values['S_long']
-                line = f'{res1}:{atom_name1},{atom_name2}:{slong}:{amps}:{times}\n'
-                params_out.write(line)
-                params_out.flush()
+                write_line_to_params_files(values, params_out)
 
                 if calc_csa_tcf == True:
 
@@ -905,6 +940,11 @@ class AnalyseTrr():
                     values_xx = result_xx.params.valuesdict()
                     values_yy = result_yy.params.valuesdict()
                     values_xy = result_xy.params.valuesdict()
+
+                    #write the lines to the respective files!
+                    write_line_to_params_files(values_xx, params_out_csa_xx)
+                    write_line_to_params_files(values_yy, params_out_csa_yy)
+                    write_line_to_params_files(values_xy, params_out_csa_xy)
 
                     # make the models
                     x_model = np.linspace(0, max(x), 10000)
@@ -957,9 +997,12 @@ class AnalyseTrr():
                     plt.clf()
                     plt.close()
 
-            #locks_pbar.update()
-        #manager.stop()
-
+            #close the parameter files!
+            params_out.close()
+            if calc_csa_tcf == True:
+                params_out_csa_xx.close()
+                params_out_csa_yy.close()
+                params_out_csa_xy.close()
     
     def fit_diffusion_tensor(self, atom_names, blocks=True, threshold=50e-9, timestep=2e-12):
         '''
@@ -1072,13 +1115,17 @@ class AnalyseTrr():
 
         if blocks == False:
             spec_file = self.path_prefix + '_fit_params/internal_correlations_0.dat'
+            # csa_xx_spec_file = self.path_prefix + '_fit_params/internal_csa_xx_correlations_0.dat'
+            # csa_yy_spec_file = self.path_prefix + '_fit_params/internal_csa_yy_correlations_0.dat'
+            # csa_xy_spec_file = self.path_prefix + '_fit_params/internal_csa_xy_correlations_0.dat'
         else:
             print('LUCAS YOU NEED TO CODE THIS!')
 
-        spectrail_density_params = utils.read_fitted_spectral_density(spec_file)
+        spectral_density_params = utils.read_fitted_spectral_density(spec_file)
+        csa_spectral_density_params = self.read_csa_spectra_density_params()
+        csa_xx_spectral_density_params, csa_yy_spectral_density_params, csa_xy_spectral_density_params = csa_spectral_density_params
 
         if write_out == True:
-
 
             print(f'Writing to:')
             print(f'{self.path_prefix}_calculated_relaxation_rates/{prefix}r1.dat)')
@@ -1105,12 +1152,17 @@ class AnalyseTrr():
             csa_angs = self.csa_cosine_angles[(res1, atom_name1, res2, atom_name2)]
             rxy = PhysQ.bondlengths[atom_name1, atom_name2]
             spectral_density_key = (res1, atom_name1+','+atom_name2)
-            params = spectrail_density_params[spectral_density_key]
+            params = spectral_density_params[spectral_density_key]
 
-            #now we need to add the diffusion parameters \
-            params['dx'] = diffusion_values[0]
-            params['dy'] = diffusion_values[1]
-            params['dz'] = diffusion_values[2]
+            # make the csa params object
+            csa_xx_params = csa_xx_spectral_density_params[spectral_density_key]
+            csa_yy_params = csa_yy_spectral_density_params[spectral_density_key]
+            csa_xy_params = csa_xy_spectral_density_params[spectral_density_key]
+            csa_params = (csa_xx_params, csa_yy_params, csa_xy_params)
+
+            #now we need to add the diffusion parameters
+            for i in (params, csa_xx_params, csa_yy_params,csa_xy_params):
+                i = self.add_diffution_spectral_density_params(i, diffusion_values)
 
             if dna == True:
                 csa_atom_name = (atom_name1, self.resid2type[res1][1])
@@ -1119,14 +1171,13 @@ class AnalyseTrr():
                 csa_atom_name = (atom_name1, self.resid2type[res1])
                 resname = self.resid2type[res1]
 
-
-
+            
             spectral_density = self.spectral_density_anisotropic
             r1 = d2e.rates.r1_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
-                                cosine_angles = angs, csa_cosine_angles=csa_angs)
+                                cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params)
 
             r2 = d2e.rates.r2_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
-                                cosine_angles = angs, csa_cosine_angles=csa_angs)
+                                cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params)
             hetnoe = d2e.rates.noe_YX(params, spectral_density, fields,
                                rxy, x, r1, y='h', cosine_angles=angs)
             
@@ -1149,18 +1200,29 @@ class AnalyseTrr():
                                       fields,x, y='h', blocks=False,dna=False, write_out=False, reduced_noe=False,
                                       error_filter=0.05, PhysQ=PhysQ, model="anisotropic", scale_model='default'):
     
-        def resid(params, values, errors, csa, bondlength, cosine_angles, spec_params, fields, csa_cosine_angles):
+        def resid(params, values, errors, csa, bondlength, cosine_angles, spec_params, fields, csa_cosine_angles, csa_params):
 
             spec_den = self.spectral_density_anisotropic
             total = []
 
-            for vali, erri, csai, bondlengthi, angi, speci, csa_angi in zip(values, errors, csa, bondlength, cosine_angles, spec_params, csa_cosine_angles):
-                speci['dx'] = params['dx']
-                speci['dy'] = params['dy']
-                speci['dz'] = params['dz']
+            for currrent_vals in zip(values, errors, csa, bondlength, cosine_angles, spec_params, csa_cosine_angles,csa_params):
+                vali, erri, csai, bondlengthi, angi, speci, csa_cosine_angles, csa_parami = currrent_vals
 
-                model_r1 = d2e.rates.r1_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=angi, csa_cosine_angles=csa_angi)
-                model_r2 = d2e.rates.r2_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=angi, csa_cosine_angles=csa_angi)
+                csa_parami_xx, csa_parami_yy, csa_parami_xy = csa_parami
+                #print('CSA Angle', csa_cosine_angles)
+
+                #add diffution to the spectral density parameters
+                for param_dict in [speci, csa_parami_xx, csa_parami_yy, csa_parami_xy]:
+                    param_dict['dx'] = params['dx']
+                    param_dict['dy'] = params['dy']
+                    param_dict['dz'] = params['dz']
+
+                csa_parami = (csa_parami_xx, csa_parami_yy, csa_parami_xy)
+
+                model_r1 = d2e.rates.r1_YX(speci, spec_den, fields, bondlengthi, csai, x, 
+                    cosine_angles=angi, csa_cosine_angles=csa_cosine_angles, csa_params=csa_parami)
+                model_r2 = d2e.rates.r2_YX(speci, spec_den, fields, bondlengthi, csai, x, 
+                    cosine_angles=angi, csa_cosine_angles=csa_cosine_angles,  csa_params=csa_parami)
 
                 # use the reduced NOE in the fitting? This is to prevent the R1 being pressent twice in the fit 
                 # and alows the error in the R1 to be included in the error estimation for the hetNOE 
@@ -1189,6 +1251,10 @@ class AnalyseTrr():
         hetnoe_err, _ = d2e.utils.read_nmr_relaxation_rate(hetNoe_errors) 
         spectral_density_params_dict = utils.read_fitted_spectral_density(spectral_density_file)
 
+        #read in the CSA parameters 
+        csa_spectral_density_params = self.read_csa_spectra_density_params()
+        csa_xx_spectral_density_params, csa_yy_spectral_density_params, csa_xy_spectral_density_params = csa_spectral_density_params
+
         axis = self.uni.select_atoms('all').principal_axes()
 
         # Quite a few logic checks!
@@ -1200,6 +1266,7 @@ class AnalyseTrr():
         cosine_angles = []
         csa_cosine_angles = []
         spectral_density_params = []
+        csa_params = []
 
 
         for i in r1:
@@ -1240,7 +1307,12 @@ class AnalyseTrr():
 
                 if check == True:
 
+                    #spectral density parameters
                     spectral_density_params.append(spectral_density_params_dict[spec_key])
+
+                    #csa parameters
+                    csa_params_temp = [a[spec_key] for a in (csa_xx_spectral_density_params, csa_yy_spectral_density_params, csa_xy_spectral_density_params)]
+                    csa_params.append(csa_params_temp)
 
                     #get the local correlation times but fitting r1, r2, and hetnoe 
                     current_values = np.array([r1[i], r2[i],hetnoe[i]])
@@ -1261,7 +1333,7 @@ class AnalyseTrr():
                     angs = self.cosine_angles[ (int(atom2_resid), atom2_type, int(atom1_resid), atom1_type)]
                     csa_angs = self.csa_cosine_angles[ (int(atom2_resid), atom2_type, int(atom1_resid), atom1_type)]
                     cosine_angles.append(angs)
-                    csa_cosine_angles.append(angs)
+                    csa_cosine_angles.append(csa_angs)
             
             except KeyError:
                 pass
@@ -1300,7 +1372,8 @@ class AnalyseTrr():
             sys.exit()
 
         minner = Minimizer(resid, params, fcn_args=(values, errors, csa, bondlengths, cosine_angles, 
-                           spectral_density_params, fields, csa_cosine_angles))
+                           spectral_density_params, fields, csa_cosine_angles,csa_params))
+
         result = minner.minimize()
         res_params = result.params
         report_fit(result)
