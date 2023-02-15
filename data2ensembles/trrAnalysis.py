@@ -960,8 +960,8 @@ class AnalyseTrr():
                 speci['dy'] = params['dy']
                 speci['dz'] = params['dz']
 
-                model_r1 = d2e.rates.r1_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=angi, csa_cosine_angles=csa_angi)
-                model_r2 = d2e.rates.r2_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=angi, csa_cosine_angles=csa_angi)
+                model_r1 = d2e.rates.r1_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=csa_angi, csa_cosine_angles=csa_angi)
+                model_r2 = d2e.rates.r2_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=csa_angi, csa_cosine_angles=csa_angi)
 
                 # use the reduced NOE in the fitting? This is to prevent the R1 being pressent twice in the fit 
                 # and alows the error in the R1 to be included in the error estimation for the hetNOE 
@@ -1062,7 +1062,7 @@ class AnalyseTrr():
                     angs = self.cosine_angles[ (int(atom2_resid), atom2_type, int(atom1_resid), atom1_type)]
                     csa_angs = self.csa_cosine_angles[ (int(atom2_resid), atom2_type, int(atom1_resid), atom1_type)]
                     cosine_angles.append(angs)
-                    csa_cosine_angles.append(angs)
+                    csa_cosine_angles.append(csa_angs)
             
             except KeyError:
                 pass
