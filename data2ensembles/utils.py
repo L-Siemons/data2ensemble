@@ -49,7 +49,7 @@ class PhysicalQuantities(object):
                 if len(s) == 5:
                     key = (s[0], s[1])
 
-                    csa_values = [float(s[a]) for a in [2,3,4]]
+                    csa_values = [float(s[a])*(2/3) for a in [2,3,4]]
                     if float(max(csa_values)) > 1e-2: 
                         print('WARNING: The csa is rather large, did you miss a e-6?')
                         print(csa_values)
@@ -114,7 +114,7 @@ class PhysicalQuantities(object):
 
         # the factor of 2pi is needed to keep it in omega!
         omega = self.calc_omega(x, field)
-        csa_total = (2/6)*omega**2
+        csa_total = (2/36)*omega**2
         return csa_total
 
 
