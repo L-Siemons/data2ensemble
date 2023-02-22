@@ -13,14 +13,13 @@ def cos_square(a):
 def cosine_angles(vec, axis):
 
     p1,p2,p3 = axis
-
     mag = np.linalg.norm(vec)
     ex = np.dot(vec, p1)/mag
     ey = np.dot(vec, p2)/mag
     ez = np.dot(vec, p3)/mag
 
-    print('CHECK THE ORDER OF EX, EY,EZ')
-    return ex,ey,ez
+    #print('CHECK THE ORDER OF EX, EY,EZ')
+    return [ex,ey,ez]
 
 def delta2k(da, diso, L2):
     top = da - diso
@@ -146,6 +145,11 @@ def calc_csa_axis(resid, atomname, csa_orientations_info, uni):
         d11 = np.linalg.solve(local_system, d11_cosine_angles)
         d22 = np.linalg.solve(local_system, d22_cosine_angles)
         d33 = np.linalg.solve(local_system, d33_cosine_angles)
+
+        d11 = d11/np.linalg.norm(d11)
+        d22 = d22/np.linalg.norm(d22)
+        d33 = d33/np.linalg.norm(d33)
+
         d = (d11, d22,d33)
         d_selected_axis = d[int(csa_orientations_info[15])]
 
@@ -170,6 +174,11 @@ def calc_csa_axis(resid, atomname, csa_orientations_info, uni):
         # d33 is the same as z_local as the rotation does not affect it
         # I have defined it here to be explicit 
         d33 = z_local 
+
+        d11 = d11/np.linalg.norm(d11)
+        d22 = d22/np.linalg.norm(d22)
+        d33 = d33/np.linalg.norm(d33)
+        
         d = (d11, d22,d33)
         d_selected_axis = d[int(csa_orientations_info[7])]
 

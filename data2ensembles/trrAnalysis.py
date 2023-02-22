@@ -4,6 +4,8 @@ import data2ensembles.mathFuncs as mathFunc
 import data2ensembles.rates
 import data2ensembles as d2e
 import data2ensembles.structureUtils as strucUtils
+#import data2ensembles.csa_spec_dens as csa_spec_dens
+
 
 import os
 import numpy as np
@@ -87,6 +89,10 @@ class AnalyseTrr():
         # this is created by  calc_cosine_angles
         self.csa_tensor_transform = None
 
+        # to account for machine precision we might need to round some times 
+        # this should be a few orders of magnitude smaller than the time step in your trr
+        self.decimal_round = 15
+
     def write_diffusion_trace(self, params, file):
 
         name = f"{self.path_prefix}_diffusion_rotacf_fit/{file}"
@@ -117,8 +123,6 @@ class AnalyseTrr():
         for i,j in zip(all_atom_res_ids, all_atom_res_types):
             if i not in self.resid2type:
                 self.resid2type[i] = j
-
-
 
     def make_ndx_file(self, atom_info, index_name,supress=True):
         '''
@@ -164,6 +168,28 @@ class AnalyseTrr():
 
         fi.close()
         return np.array(values)
+
+    def read_csa_spectra_density_params(self, blocks=False):
+
+        if blocks == False:
+            csa_xx_spec_file = self.path_prefix + '_fit_params/internal_csa_xx_correlations_0.dat'
+            csa_yy_spec_file = self.path_prefix + '_fit_params/internal_csa_yy_correlations_0.dat'
+            csa_xy_spec_file = self.path_prefix + '_fit_params/internal_csa_xy_correlations_0.dat'
+        else:
+            print('LUCAS YOU NEED TO CODE THIS!')
+
+        csa_xx_spectral_density_params = utils.read_fitted_spectral_density(csa_xx_spec_file)
+        csa_yy_spectral_density_params = utils.read_fitted_spectral_density(csa_yy_spec_file)
+        csa_xy_spectral_density_params = utils.read_fitted_spectral_density(csa_xy_spec_file)
+
+        return csa_xx_spectral_density_params, csa_yy_spectral_density_params, csa_xy_spectral_density_params
+
+    def add_diffution_spectral_density_params(self, params, diffusion):
+
+        for indx, i in enumerate(['dx', 'dy', 'dz']):
+            params[i] = diffusion[indx]
+
+        return params
 
     def make_atom_pairs_list(self, atoms):
         '''
@@ -280,13 +306,15 @@ class AnalyseTrr():
                     self.csa_tensor_transform[atom1_resname][atom_name1], 
                     self.average_uni)
 
-                csa_angs = mathFunc.cosine_angles(d_selected, axis)
-                self.csa_cosine_angles[key] = list(csa_angs)
+                # in this case we provide all of them here: 
+                self.csa_cosine_angles[key] = [mathFunc.cosine_angles(a, axis) for a in (d11, d22, d33)]
 
         if write_out_angles == True:
             angles_out.close()
 
-    def calc_rotacf(self, indx_file, atom_names, b=None, e=None, dt=None, xtc=None, timestep=2e-12, calc_csa_tcf=False, csa_tcf_skip=100):
+    def calc_rotacf(self, indx_file, atom_names, b=None, e=None, dt=None, xtc=None, 
+                    timestep=2e-12, calc_csa_tcf=False, csa_tcf_skip=100, 
+                    max_csa_ct_diff=30e-9, write_csa_pas=False):
         '''
         calculate the rotational correlation function using gromacs 
 
@@ -351,12 +379,17 @@ class AnalyseTrr():
 
         os.remove(out_name+'.xvg')
 
+
+        # after coding this I feel like it should be its own function ...
         if calc_csa_tcf == True:
             self.csa_cosine_angles_trr = {}
 
             selections = {}
+            time_list = {}
+
             for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(atom_info):
                 selections[(res1, atom_name1)] = []
+                time_list[(res1, atom_name1)] = []
 
             # currently this takes too long. I could make this shorter by using only a fraction of the points
             # Maybe say every 50-100 points. This looks like it should decay slow enough to catch the main motions 
@@ -367,6 +400,7 @@ class AnalyseTrr():
             # Chemical Shift Anisotropy Tensors of Carbonyl, Nitrogen, and Amide 
             # Proton Nuclei in Proteins through Cross-Correlated Relaxation in NMR Spectroscopy
 
+            print('Collecting CSA Principle axis possitions:')
             for ts in tqdm(self.uni.trajectory[::csa_tcf_skip]):
                 time = self.uni.trajectory.time
 
@@ -377,21 +411,122 @@ class AnalyseTrr():
                                                         self.csa_tensor_transform[atom1_resname][atom_name1], 
                                                         self.uni)
 
-                    selections[(res1, atom_name1)].append((time ,d11, d22, d33))
+                    time_list[(res1, atom_name1)].append(time)
+                    selections[(res1, atom_name1)].append([d11, d22, d33])
 
-            for i in selections:
-                out_name = f'{self.path_prefix}_rotacf/csa_rotacf_{i[0]}_{i[1]}.xvg'
+            # def wite out the vectors
+            if write_csa_pas == True: 
+                for i in selections:
+                    out_name = f'{self.path_prefix}_rotacf/csa_pas_axis_{i[0]}_{i[1]}.xvg'
+                    f = open(out_name, 'w')
+                    f.write('#time d11x d11y d11z d22x d22y d22z d33x d33y d33z\n')
+
+                    for line in selections[i]:
+                        f.write(f'{line[0]} ')
+                        f.write(f'{line[0][0]} {line[0][1]} {line[0][2]} ')
+                        f.write(f'{line[1][0]} {line[1][1]} {line[1][2]} ')
+                        f.write(f'{line[2][0]} {line[2][1]} {line[2][2]}\n')
+
+                    f.close()
+
+            # calculate correlation functions for csa Axis xx and yy
+            # this can almost certainly be done in a faster way
+
+            # csa_ct_xx, csa_ct_yy, csa_ct_xy = csa_spec_dens.calc_csa_spectral_density(selections, time_list, self.path_prefix, max_csa_ct_diff)
+            csa_ct_xx = {}
+            csa_ct_yy = {}
+            csa_ct_xy = {}
+
+            print('Calculating C(t) for CSA principle axis:')
+            print(f'CSA c(t) cutoff is {max_csa_ct_diff}')
+            print(f'This is about {int(max_csa_ct_diff/timestep)} steps')
+            for i in tqdm(selections):
+
+                current = np.array(selections[i])
+                time_array = np.array(time_list[i])*timestep
+                d11 = np.array(current[:,1].astype(float))
+                d22 = np.array(current[:,2].astype(float))
+
+                # this assumes that the smallest time point is time_array[0]
+                # sanity check: are times in assending order, seems to be true!
+                #print('Are times in assending order:', np.all(time_array[:-1] <= time_array[1:]))
+                
+
+                time_diffs = time_array - time_array[0]
+                all_arrays, time_tot, cxx_tot, cyy_tot, cxy_tot  = [],[],[],[],[]
+                
+                time_array_len = len(time_array)
+
+                for time_i, d11_i, d22_i in zip(time_array, d11, d22):
+
+                    # make the t0 array
+                    time_dim = np.abs(time_array-time_i)
+                    mask = (time_dim < max_csa_ct_diff)
+                    mask_len = sum(mask)
+
+                    d11_constant = np.zeros((mask_len, 3)) + d11_i
+                    d22_constant = np.zeros((mask_len, 3)) + d22_i
+
+                    # this einsum should give a 1D np array where the 
+                    # each entry is the dot product - I hope this works!
+
+                    #print('LOK HERE ')
+                    #print(d11[mask])
+                    #print(d11[mask].shape, d11_constant.shape)
+                    
+                    cxx = np.einsum('ij,ij->i',d11_constant,d11[mask])
+                    cyy = np.einsum('ij,ij->i',d22_constant,d22[mask])
+                    cxy = np.einsum('ij,ij->i',d11_constant,d22[mask])
+
+                    #cxx = np.array([np.dot(m,k) for m,k in zip(d11_constant,d11)])
+                    #cyy = np.array([np.dot(m,k) for m,k in zip(d22_constant,d22)])
+                    #cxy = np.array([np.dot(m,k) for m,k in zip(d11_constant,d22)])
+
+                    # now apply the P2 part 
+                    cxx = 1.5*cxx**2 - 0.5
+                    cyy = 1.5*cyy**2 - 0.5
+                    cxy = 1.5*cxy**2 - 0.5
+
+                    time_tot.append(time_dim[mask])
+                    cxx_tot.append(cxx)
+                    cyy_tot.append(cyy)
+                    cxy_tot.append(cxy)
+
+                time_tot = np.concatenate(time_tot, axis=0)
+                cxx_tot = np.concatenate(cxx_tot, axis=0)
+                cyy_tot = np.concatenate(cyy_tot, axis=0)
+                cxy_tot = np.concatenate(cxy_tot, axis=0)
+
+                # so noe we want to sum according to the 
+                # here we have a rounding step due to machine precision in the times 
+                # this will remove the noise in the c(t) when we plot it later
+                time_tot_round = np.around(time_tot, decimals=self.decimal_round)
+                dts, idx, count = np.unique(time_tot_round, return_counts=True, return_inverse=True)
+                cur_ct_xx = np.bincount(idx, cxx_tot)/count
+                cur_ct_yy = np.bincount(idx, cyy_tot)/count
+                cur_ct_xy = np.bincount(idx, cxy_tot)/count
+
+                # this assumes that the smallest time point is time_array[0]
+                # sanity check: are times in assending order, seems to be true!
+                # print('Are times in assending order:', np.all(dts[:-1] <= dts[1:]))
+                
+                # save the correlation functions.
+                csa_ct_xx[i] = [dts, cur_ct_xx]
+                csa_ct_yy[i] = [dts, cur_ct_yy]
+                csa_ct_xy[i] = [dts, cur_ct_xy]
+
+            #write out! 
+            all_strings = ''
+            for i in csa_ct_xx:
+
+                out_name = f'{self.path_prefix}_rotacf/csa_ct_{i[0]}_{i[1]}.xvg'
                 f = open(out_name, 'w')
-                f.write('#time d11x d11y d11z d22x d22y d22z d33x d33y d33z')
 
-                for line in selections[i]:
-                    f.write(f'{line[0]} ')
-                    f.write(f'{line[1][0]} {line[1][1]} {line[1][2]} ')
-                    f.write(f'{line[2][0]} {line[2][1]} {line[2][2]} ')
-                    f.write(f'{line[3][0]} {line[3][1]} {line[3][2]}\n')
-
+                f.write('#time xx yy xy\n')
+                string = ''.join([ f'{q} {w} {e} {r}\n' for q,w,e,r in zip(csa_ct_xx[i][0], csa_ct_xx[i][1], csa_ct_yy[i][1], csa_ct_xy[i][1])])
+                #print(string)
+                f.write(string)
                 f.close()
-
 
     def calc_rotacf_segments(self,indx_file, atom_selection_pairs, seg_blocks, xtc=None):
         '''
@@ -468,27 +603,31 @@ class AnalyseTrr():
 
 
 
-    def correlation_function(self, Params, x):
+    def correlation_function(self, Params, x, theta=0):
 
         '''
         An internal correlation function. This is the same one that is used
         by Kresten in the absurder paper.
         '''
 
-        total = Params['S_long']
+        total = 0
         for i in range(self.curve_count):
             i = i+1
             amp = 'amp_%i'%(i)
             time = 'time_%i'%(i)
-
             total = total + Params[amp]*(np.e**(-1*x/Params[time]))
 
+        #this is for the vectors that are not aligned with eachother
+        if theta != 0:
+            total = (1.5*np.cos(theta)**2 - 0.5)*total
+
+        total = total + Params['S_long']
         return total
 
-    def spectral_density_fuction(self,params, omega, dummy_tauc=5e-6):
+    def spectral_density_fuction(self,params, omega, dummy_tauc=5e-6, theta=0):
 
         term2 = params['S_long']*dummy_tauc/(1+(omega*dummy_tauc)**2)
-        total = term2
+        total = 0
 
         for i in range(self.curve_count):
             i = i + 1
@@ -502,7 +641,27 @@ class AnalyseTrr():
             term1 = ampi*tau_eff/(1+(omega*tau_eff)**2)
             total = total + term1
 
+        #this is incase the vectors are not aligned
+        if theta != 0:
+            total = (1.5*np.cos(theta)**2 - 0.5)*total
+
+        total = total + term2 
+
         return (2/5.)*total
+
+    def spectral_density_fuction_numerical(self, x,dummy_tauc, y):
+            #x = x
+            dt = x[1]-x[0]
+            tumbling = 0.2*(np.e**(-x/dummy_tauc))
+            total = tumbling * y
+
+            j_fft = scipy.fft.fft(total)*dt*2
+            j_fft = scipy.fft.fftshift(j_fft)
+            j_fft = j_fft.real #* 2/5 # seems like this factor is needed for normalising, not sure why ...
+            j_fft_freq = scipy.fft.fftfreq(len(x), d=dt)
+            j_fft_freq = scipy.fft.fftshift(j_fft_freq)
+            j_fft_freq = np.pi*j_fft_freq*2
+            return j_fft_freq, j_fft
     
     def correlation_function_anisotropic(self, x, diffusion_tensor_components, angles):
         '''
@@ -556,22 +715,26 @@ class AnalyseTrr():
             term1_total = term1_top/term1_bottom
             total = total + term1_total
 
-            #now we do the internal motions 
-            for i in range(self.curve_count):
-                i = i + 1
+            # this check means we dont do the sum for internal motions when it is not there 
+            # it also means we can just switch off the internal motions by setting S_long = 1
+            # and not worry about the params['amp_%i'%(i)] terms.
+            if params['S_long'] != 1:
+                #now we do the internal motions 
+                for i in range(self.curve_count):
+                    i = i + 1
 
-                #correction for fitting the correlation times in ps
-                tau_internal = params['time_%i'%(i)]
-                amp_internal = params['amp_%i'%(i)]
+                    #correction for fitting the correlation times in ps
+                    tau_internal = params['time_%i'%(i)]
+                    amp_internal = params['amp_%i'%(i)]
 
-                tau_eff = taui*tau_internal/(tau_internal+taui)
-                term_internal = amp_internal*ampi*tau_eff/(1+(omega*tau_eff)**2)
-                
-                total = total + term_internal
+                    tau_eff = taui*tau_internal/(tau_internal+taui)
+                    term_internal = amp_internal*ampi*tau_eff/(1+(omega*tau_eff)**2)
+                    
+                    total = total + term_internal
 
         return (2./5.)*total
 
-    def fit_correlation_function(self,x,y, log_time_min=5e-13, log_time_max=10e-9, blocks=True):
+    def fit_correlation_function(self,x,y, log_time_min=5e-13, log_time_max=10e-9, blocks=True, theta=0):
         '''
         This function fits an internal correlation function and also the corresponding spectral density
         function. To do this we assume that the there is an overall isotropic tumbling so we can use a
@@ -609,26 +772,15 @@ class AnalyseTrr():
         #     j_fft_freq = np.pi*j_fft_freq*2
         #     return j_fft_freq, j_fft
 
-        def func2min(Params, x,y):
+        def func2min(Params, x,y, theta):
 
             '''
             The function we want to minimize. The fitting is carried out both in s and hz.
             '''
 
-            correlation_diff =  y - correlation_function(Params, x)
-
-            x = x
-            dt = x[1]-x[0]
-            tumbling = 0.4*(np.e**(-x/dummy_tauc))
-            total = tumbling * y
-
-            j_fft = scipy.fft.fft(total)*dt*2
-            j_fft = scipy.fft.fftshift(j_fft)
-            j_fft = j_fft.real
-            j_fft_freq = scipy.fft.fftfreq(len(x), d=dt)
-            j_fft_freq = scipy.fft.fftshift(j_fft_freq)
-            j_fft_freq = np.pi*j_fft_freq*2
-            spec_difference = j_fft - self.spectral_density_fuction(Params, j_fft_freq,  dummy_tauc = dummy_tauc)
+            correlation_diff =  y - correlation_function(Params, x, theta=theta)
+            j_fft_freq, j_fft = self.spectral_density_fuction_numerical(x,dummy_tauc, y)
+            spec_difference = j_fft - self.spectral_density_fuction(Params, j_fft_freq,  dummy_tauc = dummy_tauc, theta=theta)
 
             all_diffs = np.concatenate([spec_difference, correlation_diff])
             return all_diffs.flatten()
@@ -637,7 +789,13 @@ class AnalyseTrr():
         # create a set of Parameters
         Params = Parameters()
         s_guess = np.mean(y[int(len(y)*0.75):])
-        Params.add('S_long', value=s_guess, min=0, max=1)
+
+        # allow for a negative S is theta is not 0
+        # woohoo this worked! 
+        if theta == 0:
+            Params.add('S_long', value=s_guess, min=0, max=1)
+        else:
+            Params.add('S_long', value=s_guess, min=-1, max=1)
 
         log_times = np.geomspace(log_time_min, log_time_max, curve_count)
         amp_list = []
@@ -662,7 +820,7 @@ class AnalyseTrr():
         # for i in Params:
         #     print(i, Params[i].value)
         # do fit, here with the default leastsq algorithm
-        minner = Minimizer(func2min, Params, fcn_args=(x, y))
+        minner = Minimizer(func2min, Params, fcn_args=(x, y, theta))
         result = minner.minimize()
         report_fit(result)
         return result
@@ -670,7 +828,19 @@ class AnalyseTrr():
     
     def fit_all_correlation_functions(self,
         atom_names, time_threshold=10e-9,
-        log_time_min=50, log_time_max=5000,blocks=True):
+        log_time_min=50, log_time_max=5000,blocks=True, calc_csa_tcf=False):
+
+        def write_line_to_params_files(values, file, curve_count=self.curve_count):
+
+            amps = [str(values['amp_%i'%(i+1)]) for i in range(curve_count)]
+            amps = ','.join(amps)
+            times = [str(values['time_%i'%(i+1)]) for i in range(curve_count)]
+            times = ','.join(times)
+            slong = values['S_long']
+            line = f'{res1}:{atom_name1},{atom_name2}:{slong}:{amps}:{times}\n'
+            file.write(line)
+            file.flush()
+
 
         atom_info = self.make_atom_pairs_list(atom_names)
         atom1 = atom_names[0][0]
@@ -703,6 +873,11 @@ class AnalyseTrr():
         for block in range(block_count):
 
             params_out = open(f'{self.path_prefix}_fit_params/internal_correlations_{block}.dat', 'w')
+            if calc_csa_tcf == True:
+                params_out_csa_xx = open(f'{self.path_prefix}_fit_params/internal_csa_xx_correlations_{block}.dat', 'w')
+                params_out_csa_yy = open(f'{self.path_prefix}_fit_params/internal_csa_yy_correlations_{block}.dat', 'w')
+                params_out_csa_xy = open(f'{self.path_prefix}_fit_params/internal_csa_xy_correlations_{block}.dat', 'w')
+
             params_out.write('# residue:atoms:S2:amps:times\n')
             
             
@@ -730,27 +905,116 @@ class AnalyseTrr():
                 x_model = np.linspace(0, max(x), 10000)
                 y_model = self.correlation_function(values, x_model)
 
+                # calculate numerical spectral density 
+                j_fft_freq, j_fft = self.spectral_density_fuction_numerical(x,self.dummy_tauc, y)
+                freq_max = np.max(abs(j_fft_freq))
+                model_omega = j_fft_freq
+                xx_j_model = self.spectral_density_fuction(values, model_omega, dummy_tauc=self.dummy_tauc, theta=0)
+
                 #print('plotting...')
-                plt.plot(x,y, label='raw acf')
-                plt.plot(x_model, y_model, label='fit')
-                plt.legend()
-                plt.xscale('symlog')
+                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6, 3), ) 
+                ax1.plot(x,y, label='raw acf')
+                ax1.plot(x_model, y_model, label='fit')
+                ax1.legend()
+
+
+                # 
+                ax2.scatter(j_fft_freq,j_fft, label='raw acf', c='C1')
+                ax2.plot(model_omega, xx_j_model, label='fit', c='C2')
+                ax2.legend()    
+
                 plt.savefig(f'{self.path_prefix}_fits/rot_acf_{block}_{res1}_{atom_name1}.pdf')
+                # plt.show()
+                # os.exit()
+                plt.clf()
                 plt.close()
+
                 #residues_pbar.update()
+                write_line_to_params_files(values, params_out)
 
-                amps = [str(values['amp_%i'%(i+1)]) for i in range(self.curve_count)]
-                amps = ','.join(amps)
-                times = [str(values['time_%i'%(i+1)]) for i in range(self.curve_count)]
-                times = ','.join(times)
-                slong = values['S_long']
-                line = f'{res1}:{atom_name1},{atom_name2}:{slong}:{amps}:{times}\n'
-                params_out.write(line)
-                params_out.flush()
+                if calc_csa_tcf == True:
 
-            #locks_pbar.update()
-        #manager.stop()
+                    csa_name = f'{self.path_prefix}_rotacf/csa_ct_{res1}_{atom_name1}.xvg'
+                    print(csa_name)
+                    temp = self.read_gmx_xvg(csa_name)
+                    time = temp.T[0]
+                    ct_xx = temp.T[1][time < time_threshold]
+                    ct_yy = temp.T[2][time < time_threshold]
+                    ct_xy = temp.T[3][time < time_threshold]
+                    time = time[time < time_threshold]
 
+                    # fit the CSA c(t)s
+                    result_xx = self.fit_correlation_function(time,ct_xx)
+                    result_yy = self.fit_correlation_function(time,ct_yy)
+                    result_xy = self.fit_correlation_function(time,ct_xy, theta=np.pi/2)
+                    
+                    # make vaues dicts
+                    values_xx = result_xx.params.valuesdict()
+                    values_yy = result_yy.params.valuesdict()
+                    values_xy = result_xy.params.valuesdict()
+
+                    #write the lines to the respective files!
+                    write_line_to_params_files(values_xx, params_out_csa_xx)
+                    write_line_to_params_files(values_yy, params_out_csa_yy)
+                    write_line_to_params_files(values_xy, params_out_csa_xy)
+
+                    # make the models
+                    x_model = np.linspace(0, max(x), 10000)
+                    xx_model = self.correlation_function(values_xx, x_model)
+                    yy_model = self.correlation_function(values_yy, x_model)
+                    xy_model = self.correlation_function(values_xy, x_model, theta=np.pi/2)
+
+                    #make the model spectral density, numerical points,
+                    xx_j_fft_freq, xx_j_fft = self.spectral_density_fuction_numerical(time,self.dummy_tauc, ct_xx)
+                    yy_j_fft_freq, yy_j_fft = self.spectral_density_fuction_numerical(time,self.dummy_tauc, ct_yy)
+                    xy_j_fft_freq, xy_j_fft = self.spectral_density_fuction_numerical(time,self.dummy_tauc, ct_xy)
+
+                    # model for the spectral density
+                    omega_model = np.linspace(min(xx_j_fft_freq), max(xx_j_fft_freq), 1000)
+                    xx_j_model = self.spectral_density_fuction(values_xx, omega_model, dummy_tauc=5e-6, theta=0)
+                    yy_j_model = self.spectral_density_fuction(values_yy, omega_model, dummy_tauc=5e-6, theta=0)
+                    xy_j_model = self.spectral_density_fuction(values_xy, omega_model, dummy_tauc=5e-6, theta=0)
+
+                    #plot
+                    fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(2, 3, figsize=(9, 3), ) 
+
+                    # correlation functions
+                    ax1.scatter(time, ct_xx, label='ct_xx', color='C1',s=2)
+                    ax1.plot(x_model, xx_model, color='C2')
+
+                    ax2.scatter(time, ct_yy, label='ct_yy', color='C1',s=2)
+                    ax2.plot(x_model, yy_model, color='C2')
+
+                    ax3.scatter(time, ct_xy, label='ct_xy', color='C1',s=2)
+                    ax3.plot(x_model, xy_model, color='C2')
+
+                    #spectral densities
+                    ax4.scatter(xx_j_fft_freq, xx_j_fft, label='j_xx', color='C1',s=2)
+                    ax4.plot(omega_model, xx_j_model, color='C2')
+                    ax4.set_yscale('symlog')
+
+                    ax5.scatter(yy_j_fft_freq, yy_j_fft, label='j_yy', color='C1',s=2)
+                    ax5.plot(omega_model, yy_j_model, color='C2')
+                    ax5.set_yscale('symlog')
+
+                    ax6.scatter(xy_j_fft_freq, xy_j_fft, label='j_xy', color='C1',s=2)
+                    ax6.plot(omega_model, xy_j_model, color='C2')
+                    ax6.set_yscale('symlog')
+                    
+                    ax1.legend()
+                    ax2.legend()
+                    ax3.legend()
+                    
+                    plt.savefig(f'{self.path_prefix}_fits/rot_acf_{block}_{res1}_{atom_name1}_csa_ct.pdf')
+                    plt.clf()
+                    plt.close()
+
+            #close the parameter files!
+            params_out.close()
+            if calc_csa_tcf == True:
+                params_out_csa_xx.close()
+                params_out_csa_yy.close()
+                params_out_csa_xy.close()
     
     def fit_diffusion_tensor(self, atom_names, blocks=True, threshold=50e-9, timestep=2e-12):
         '''
@@ -863,13 +1127,17 @@ class AnalyseTrr():
 
         if blocks == False:
             spec_file = self.path_prefix + '_fit_params/internal_correlations_0.dat'
+            # csa_xx_spec_file = self.path_prefix + '_fit_params/internal_csa_xx_correlations_0.dat'
+            # csa_yy_spec_file = self.path_prefix + '_fit_params/internal_csa_yy_correlations_0.dat'
+            # csa_xy_spec_file = self.path_prefix + '_fit_params/internal_csa_xy_correlations_0.dat'
         else:
             print('LUCAS YOU NEED TO CODE THIS!')
 
-        spectrail_density_params = utils.read_fitted_spectral_density(spec_file)
+        spectral_density_params = utils.read_fitted_spectral_density(spec_file)
+        csa_spectral_density_params = self.read_csa_spectra_density_params()
+        csa_xx_spectral_density_params, csa_yy_spectral_density_params, csa_xy_spectral_density_params = csa_spectral_density_params
 
         if write_out == True:
-
 
             print(f'Writing to:')
             print(f'{self.path_prefix}_calculated_relaxation_rates/{prefix}r1.dat)')
@@ -906,12 +1174,17 @@ class AnalyseTrr():
             csa_angs = self.csa_cosine_angles[(res1, atom_name1, res2, atom_name2)]
             rxy = PhysQ.bondlengths[atom_name1, atom_name2]
             spectral_density_key = (res1, atom_name1+','+atom_name2)
-            params = spectrail_density_params[spectral_density_key]
+            params = spectral_density_params[spectral_density_key]
 
-            #now we need to add the diffusion parameters \
-            params['dx'] = diffusion_values[0]
-            params['dy'] = diffusion_values[1]
-            params['dz'] = diffusion_values[2]
+            # make the csa params object
+            csa_xx_params = csa_xx_spectral_density_params[spectral_density_key]
+            csa_yy_params = csa_yy_spectral_density_params[spectral_density_key]
+            csa_xy_params = csa_xy_spectral_density_params[spectral_density_key]
+            csa_params = (csa_xx_params, csa_yy_params, csa_xy_params)
+
+            #now we need to add the diffusion parameters
+            for i in (params, csa_xx_params, csa_yy_params,csa_xy_params):
+                i = self.add_diffution_spectral_density_params(i, diffusion_values)
 
             if dna == True:
                 csa_atom_name = (atom_name1, self.resid2type[res1][1])
@@ -920,14 +1193,13 @@ class AnalyseTrr():
                 csa_atom_name = (atom_name1, self.resid2type[res1])
                 resname = self.resid2type[res1]
 
-
-
+            
             spectral_density = self.spectral_density_anisotropic
             r1 = d2e.rates.r1_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
-                                cosine_angles = angs, csa_cosine_angles=csa_angs)
+                                cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params)
 
             r2 = d2e.rates.r2_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
-                                cosine_angles = angs, csa_cosine_angles=csa_angs)
+                                cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params)
             hetnoe = d2e.rates.noe_YX(params, spectral_density, fields,
                                rxy, x, r1, y='h', cosine_angles=angs)
             
@@ -950,18 +1222,33 @@ class AnalyseTrr():
                                       fields,x, y='h', blocks=False,dna=False, write_out=False, reduced_noe=False,
                                       error_filter=0.05, PhysQ=PhysQ, model="anisotropic", scale_model='default'):
     
-        def resid(params, values, errors, csa, bondlength, cosine_angles, spec_params, fields, csa_cosine_angles):
+        def resid(params, values, errors, csa, bondlength, cosine_angles, spec_params, fields, csa_cosine_angles, csa_params):
 
             spec_den = self.spectral_density_anisotropic
             total = []
 
-            for vali, erri, csai, bondlengthi, angi, speci, csa_angi in zip(values, errors, csa, bondlength, cosine_angles, spec_params, csa_cosine_angles):
-                speci['dx'] = params['dx']
-                speci['dy'] = params['dy']
-                speci['dz'] = params['dz']
+            for currrent_vals in zip(values, errors, csa, bondlength, cosine_angles, spec_params, csa_cosine_angles,csa_params):
+                vali, erri, csai, bondlengthi, angi, speci, csa_cosine_angles, csa_parami = currrent_vals
 
-                model_r1 = d2e.rates.r1_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=csa_angi, csa_cosine_angles=csa_angi)
-                model_r2 = d2e.rates.r2_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=csa_angi, csa_cosine_angles=csa_angi)
+                # these were from the old main branch 
+
+                # model_r1 = d2e.rates.r1_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=csa_angi, csa_cosine_angles=csa_angi)
+                # model_r2 = d2e.rates.r2_YX(speci, spec_den, fields, bondlengthi, csai, x, cosine_angles=csa_angi, csa_cosine_angles=csa_angi)
+                csa_parami_xx, csa_parami_yy, csa_parami_xy = csa_parami
+                #print('CSA Angle', csa_cosine_angles)
+
+                #add diffution to the spectral density parameters
+                for param_dict in [speci, csa_parami_xx, csa_parami_yy, csa_parami_xy]:
+                    param_dict['dx'] = params['dx']
+                    param_dict['dy'] = params['dy']
+                    param_dict['dz'] = params['dz']
+
+                csa_parami = (csa_parami_xx, csa_parami_yy, csa_parami_xy)
+
+                model_r1 = d2e.rates.r1_YX(speci, spec_den, fields, bondlengthi, csai, x, 
+                    cosine_angles=angi, csa_cosine_angles=csa_cosine_angles, csa_params=csa_parami)
+                model_r2 = d2e.rates.r2_YX(speci, spec_den, fields, bondlengthi, csai, x, 
+                    cosine_angles=angi, csa_cosine_angles=csa_cosine_angles,  csa_params=csa_parami)
 
                 # use the reduced NOE in the fitting? This is to prevent the R1 being pressent twice in the fit 
                 # and alows the error in the R1 to be included in the error estimation for the hetNOE 
@@ -990,6 +1277,10 @@ class AnalyseTrr():
         hetnoe_err, _ = d2e.utils.read_nmr_relaxation_rate(hetNoe_errors) 
         spectral_density_params_dict = utils.read_fitted_spectral_density(spectral_density_file)
 
+        #read in the CSA parameters 
+        csa_spectral_density_params = self.read_csa_spectra_density_params()
+        csa_xx_spectral_density_params, csa_yy_spectral_density_params, csa_xy_spectral_density_params = csa_spectral_density_params
+
         axis = self.uni.select_atoms('all').principal_axes()
 
         # Quite a few logic checks!
@@ -1001,6 +1292,7 @@ class AnalyseTrr():
         cosine_angles = []
         csa_cosine_angles = []
         spectral_density_params = []
+        csa_params = []
 
 
         for i in r1:
@@ -1041,7 +1333,12 @@ class AnalyseTrr():
 
                 if check == True:
 
+                    #spectral density parameters
                     spectral_density_params.append(spectral_density_params_dict[spec_key])
+
+                    #csa parameters
+                    csa_params_temp = [a[spec_key] for a in (csa_xx_spectral_density_params, csa_yy_spectral_density_params, csa_xy_spectral_density_params)]
+                    csa_params.append(csa_params_temp)
 
                     #get the local correlation times but fitting r1, r2, and hetnoe 
                     current_values = np.array([r1[i], r2[i],hetnoe[i]])
@@ -1101,7 +1398,8 @@ class AnalyseTrr():
             sys.exit()
 
         minner = Minimizer(resid, params, fcn_args=(values, errors, csa, bondlengths, cosine_angles, 
-                           spectral_density_params, fields, csa_cosine_angles))
+                           spectral_density_params, fields, csa_cosine_angles,csa_params))
+
         result = minner.minimize()
         res_params = result.params
         report_fit(result)
