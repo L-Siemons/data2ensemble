@@ -95,7 +95,12 @@ class AnalyseTrr():
 
     def write_diffusion_trace(self, params, file):
 
-        name = f"{self.path_prefix}_diffusion_rotacf_fit/{file}"
+        folder = f"{self.path_prefix}_diffusion_rotacf_fit/"
+        name = f"{folder}{file}"
+        
+        if os.path.isdir(folder) == False:
+            os.mkdir(folder)
+
         print(f'writing diffusion tensor to {name}')
         f = open(name, 'w')
         f.write(f"#component value error\ndx: {params['dx'].value} {params['dx'].stderr} dy: {params['dy'].value} {params['dy'].stderr} dz: {params['dz'].value} {params['dz'].stderr}")
@@ -161,6 +166,7 @@ class AnalyseTrr():
         values = []
         #print('opening file ...')
         fi = open(f)
+        print(f'Reading; {f}')
         for i in fi.readlines():
             if i[0] not in ('#', '@'):
                 s = i.split()
@@ -314,7 +320,7 @@ class AnalyseTrr():
 
     def calc_rotacf(self, indx_file, atom_names, b=None, e=None, dt=None, xtc=None, 
                     timestep=2e-12, calc_csa_tcf=False, csa_tcf_skip=100, 
-                    max_csa_ct_diff=30e-9, write_csa_pas=False):
+                    max_csa_ct_diff=30e-9, write_csa_pas=False, csa_tcf_evaluation_steps=100):
         '''
         calculate the rotational correlation function using gromacs 
 
@@ -439,7 +445,8 @@ class AnalyseTrr():
 
             print('Calculating C(t) for CSA principle axis:')
             print(f'CSA c(t) cutoff is {max_csa_ct_diff}')
-            print(f'This is about {int(max_csa_ct_diff/timestep)} steps')
+            print(f'This is about {int(max_csa_ct_diff/(csa_tcf_skip*timestep))} steps')
+
             for i in tqdm(selections):
 
                 current = np.array(selections[i])
@@ -463,6 +470,21 @@ class AnalyseTrr():
                     time_dim = np.abs(time_array-time_i)
                     mask = (time_dim < max_csa_ct_diff)
                     mask_len = sum(mask)
+
+                    # this section allows us to evaluate the TCF less often
+                    # hopefully speeding up the calculation!
+
+                    # if csa_tcf_evaluation_steps != False:
+                    #     if csa_tcf_evaluation_steps < mask_len:
+                    #         false_count = mask_len - csa_tcf_evaluation_steps
+
+                    #         # make the masks
+                    #         sparse_csa_evaluation_true = [True] * csa_tcf_evaluation_steps
+                    #         sparse_csa_evaluation_false = [False]*false_count
+                    #         sparse_csa_evaluation = sparse_csa_evaluation_true + sparse_csa_evaluation_false
+
+                    #         r.shuffle(sparse_csa_evaluation)
+                    #         mask = mask.tolist()# and sparse_csa_evaluation
 
                     d11_constant = np.zeros((mask_len, 3)) + d11_i
                     d22_constant = np.zeros((mask_len, 3)) + d22_i
@@ -779,11 +801,11 @@ class AnalyseTrr():
             '''
 
             correlation_diff =  y - correlation_function(Params, x, theta=theta)
-            j_fft_freq, j_fft = self.spectral_density_fuction_numerical(x,dummy_tauc, y)
-            spec_difference = j_fft - self.spectral_density_fuction(Params, j_fft_freq,  dummy_tauc = dummy_tauc, theta=theta)
+            #j_fft_freq, j_fft = self.spectral_density_fuction_numerical(x,dummy_tauc, y)
+            #spec_difference = j_fft - self.spectral_density_fuction(Params, j_fft_freq,  dummy_tauc = dummy_tauc, theta=theta)
 
-            all_diffs = np.concatenate([spec_difference, correlation_diff])
-            return all_diffs.flatten()
+            #all_diffs = np.concatenate([spec_difference, correlation_diff])
+            return correlation_diff #all_diffs.flatten()
 
 
         # create a set of Parameters
