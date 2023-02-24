@@ -93,6 +93,9 @@ class AnalyseTrr():
         # this should be a few orders of magnitude smaller than the time step in your trr
         self.decimal_round = 15
 
+        #how often should we write out pdfs? 
+        self.plotfraction = 1
+
     def write_diffusion_trace(self, params, file):
 
         folder = f"{self.path_prefix}_diffusion_rotacf_fit/"
@@ -756,6 +759,93 @@ class AnalyseTrr():
 
         return (2./5.)*total
 
+    def plot_correlation_function(self, params, x, y, block, res1, atom_name1, theta=0):
+        '''
+        This function plots the correlation functions
+        '''
+
+        x_model = np.linspace(0, max(x), 10000)
+        y_model = self.correlation_function(params, x_model)
+
+        # calculate numerical spectral density 
+        j_fft_freq, j_fft = self.spectral_density_fuction_numerical(x,self.dummy_tauc, y)
+        freq_max = np.max(abs(j_fft_freq))
+        model_omega = j_fft_freq
+        xx_j_model = self.spectral_density_fuction(params, model_omega, dummy_tauc=self.dummy_tauc, theta=theta)
+
+        #print('plotting...')
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6, 3), ) 
+        ax1.plot(x,y, label='raw acf')
+        ax1.plot(x_model, y_model, label='fit')
+        ax1.legend()
+
+        ax2.scatter(j_fft_freq,j_fft, label='raw acf', c='C1')
+        ax2.plot(model_omega, xx_j_model, label='fit', c='C2')
+        ax2.legend()    
+
+        plt.savefig(f'{self.path_prefix}_fits/rot_acf_{block}_{res1}_{atom_name1}.pdf')
+        # plt.show()
+        # os.exit()
+        plt.clf()
+        plt.close()
+
+    def plot_csa_tcfs(self, values, time, cts, block, res1, atom_name1):
+
+        values_xx, values_yy, values_xy = values
+        ct_xx, ct_yy, ct_xy = cts
+
+        # make the models
+        x_model = np.linspace(0, max(time), 10000)
+        xx_model = self.correlation_function(values_xx, x_model)
+        yy_model = self.correlation_function(values_yy, x_model)
+        xy_model = self.correlation_function(values_xy, x_model, theta=np.pi/2)
+
+        #make the model spectral density, numerical points,
+        xx_j_fft_freq, xx_j_fft = self.spectral_density_fuction_numerical(time,self.dummy_tauc, ct_xx)
+        yy_j_fft_freq, yy_j_fft = self.spectral_density_fuction_numerical(time,self.dummy_tauc, ct_yy)
+        xy_j_fft_freq, xy_j_fft = self.spectral_density_fuction_numerical(time,self.dummy_tauc, ct_xy)
+
+        # model for the spectral density
+        omega_model = np.linspace(min(xx_j_fft_freq), max(xx_j_fft_freq), 1000)
+        xx_j_model = self.spectral_density_fuction(values_xx, omega_model, dummy_tauc=5e-6, theta=0)
+        yy_j_model = self.spectral_density_fuction(values_yy, omega_model, dummy_tauc=5e-6, theta=0)
+        xy_j_model = self.spectral_density_fuction(values_xy, omega_model, dummy_tauc=5e-6, theta=0)
+
+        #plot
+        fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(2, 3, figsize=(9, 3), ) 
+
+        # correlation functions
+        ax1.scatter(time, ct_xx, label='ct_xx', color='C1',s=2)
+        ax1.plot(x_model, xx_model, color='C2')
+
+        ax2.scatter(time, ct_yy, label='ct_yy', color='C1',s=2)
+        ax2.plot(x_model, yy_model, color='C2')
+
+        ax3.scatter(time, ct_xy, label='ct_xy', color='C1',s=2)
+        ax3.plot(x_model, xy_model, color='C2')
+
+        #spectral densities
+        ax4.scatter(xx_j_fft_freq, xx_j_fft, label='j_xx', color='C1',s=2)
+        ax4.plot(omega_model, xx_j_model, color='C2')
+        ax4.set_yscale('symlog')
+
+        ax5.scatter(yy_j_fft_freq, yy_j_fft, label='j_yy', color='C1',s=2)
+        ax5.plot(omega_model, yy_j_model, color='C2')
+        ax5.set_yscale('symlog')
+
+        ax6.scatter(xy_j_fft_freq, xy_j_fft, label='j_xy', color='C1',s=2)
+        ax6.plot(omega_model, xy_j_model, color='C2')
+        ax6.set_yscale('symlog')
+        
+        ax1.legend()
+        ax2.legend()
+        ax3.legend()
+        
+        plt.savefig(f'{self.path_prefix}_fits/rot_acf_{block}_{res1}_{atom_name1}_csa_ct.pdf')
+        plt.clf()
+        plt.close()
+
+
     def fit_correlation_function(self,x,y, log_time_min=5e-13, log_time_max=10e-9, blocks=True, theta=0):
         '''
         This function fits an internal correlation function and also the corresponding spectral density
@@ -847,7 +937,6 @@ class AnalyseTrr():
         report_fit(result)
         return result
 
-    
     def fit_all_correlation_functions(self,
         atom_names, time_threshold=10e-9,
         log_time_min=50, log_time_max=5000,blocks=True, calc_csa_tcf=False):
@@ -905,11 +994,15 @@ class AnalyseTrr():
             
             for res1, res2, atom_name1, atom_name2 in atom_info:
 
+                #file IO
                 if blocks == True:
                     name = f"{self.path_prefix}_rotacf/rotacf_block_{block}_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
                 else:
                     name = f"{self.path_prefix}_rotacf/rotacf_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
 
+                # should we plot the figure for this ?
+                plot_chance = r.random()
+                plot_status = plot_chance < self.plotfraction
                 print('>fitting rotacf for:', name)
 
                 #Sometimes we dont want to fit the whole Ci(t) as it will often plateau. This time is in ps
@@ -924,32 +1017,10 @@ class AnalyseTrr():
                 #print('starting fit ...')
                 result = self.fit_correlation_function(x,y)
                 values = result.params.valuesdict()
-                x_model = np.linspace(0, max(x), 10000)
-                y_model = self.correlation_function(values, x_model)
 
-                # calculate numerical spectral density 
-                j_fft_freq, j_fft = self.spectral_density_fuction_numerical(x,self.dummy_tauc, y)
-                freq_max = np.max(abs(j_fft_freq))
-                model_omega = j_fft_freq
-                xx_j_model = self.spectral_density_fuction(values, model_omega, dummy_tauc=self.dummy_tauc, theta=0)
-
-                #print('plotting...')
-                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6, 3), ) 
-                ax1.plot(x,y, label='raw acf')
-                ax1.plot(x_model, y_model, label='fit')
-                ax1.legend()
-
-
-                # 
-                ax2.scatter(j_fft_freq,j_fft, label='raw acf', c='C1')
-                ax2.plot(model_omega, xx_j_model, label='fit', c='C2')
-                ax2.legend()    
-
-                plt.savefig(f'{self.path_prefix}_fits/rot_acf_{block}_{res1}_{atom_name1}.pdf')
-                # plt.show()
-                # os.exit()
-                plt.clf()
-                plt.close()
+                #put the plotting in!
+                if plot_status == True:
+                    self.plot_correlation_function(values, x, y, block, res1, atom_name1)
 
                 #residues_pbar.update()
                 write_line_to_params_files(values, params_out)
@@ -980,56 +1051,10 @@ class AnalyseTrr():
                     write_line_to_params_files(values_yy, params_out_csa_yy)
                     write_line_to_params_files(values_xy, params_out_csa_xy)
 
-                    # make the models
-                    x_model = np.linspace(0, max(x), 10000)
-                    xx_model = self.correlation_function(values_xx, x_model)
-                    yy_model = self.correlation_function(values_yy, x_model)
-                    xy_model = self.correlation_function(values_xy, x_model, theta=np.pi/2)
-
-                    #make the model spectral density, numerical points,
-                    xx_j_fft_freq, xx_j_fft = self.spectral_density_fuction_numerical(time,self.dummy_tauc, ct_xx)
-                    yy_j_fft_freq, yy_j_fft = self.spectral_density_fuction_numerical(time,self.dummy_tauc, ct_yy)
-                    xy_j_fft_freq, xy_j_fft = self.spectral_density_fuction_numerical(time,self.dummy_tauc, ct_xy)
-
-                    # model for the spectral density
-                    omega_model = np.linspace(min(xx_j_fft_freq), max(xx_j_fft_freq), 1000)
-                    xx_j_model = self.spectral_density_fuction(values_xx, omega_model, dummy_tauc=5e-6, theta=0)
-                    yy_j_model = self.spectral_density_fuction(values_yy, omega_model, dummy_tauc=5e-6, theta=0)
-                    xy_j_model = self.spectral_density_fuction(values_xy, omega_model, dummy_tauc=5e-6, theta=0)
-
-                    #plot
-                    fig, ((ax1, ax2, ax3), (ax4, ax5, ax6)) = plt.subplots(2, 3, figsize=(9, 3), ) 
-
-                    # correlation functions
-                    ax1.scatter(time, ct_xx, label='ct_xx', color='C1',s=2)
-                    ax1.plot(x_model, xx_model, color='C2')
-
-                    ax2.scatter(time, ct_yy, label='ct_yy', color='C1',s=2)
-                    ax2.plot(x_model, yy_model, color='C2')
-
-                    ax3.scatter(time, ct_xy, label='ct_xy', color='C1',s=2)
-                    ax3.plot(x_model, xy_model, color='C2')
-
-                    #spectral densities
-                    ax4.scatter(xx_j_fft_freq, xx_j_fft, label='j_xx', color='C1',s=2)
-                    ax4.plot(omega_model, xx_j_model, color='C2')
-                    ax4.set_yscale('symlog')
-
-                    ax5.scatter(yy_j_fft_freq, yy_j_fft, label='j_yy', color='C1',s=2)
-                    ax5.plot(omega_model, yy_j_model, color='C2')
-                    ax5.set_yscale('symlog')
-
-                    ax6.scatter(xy_j_fft_freq, xy_j_fft, label='j_xy', color='C1',s=2)
-                    ax6.plot(omega_model, xy_j_model, color='C2')
-                    ax6.set_yscale('symlog')
-                    
-                    ax1.legend()
-                    ax2.legend()
-                    ax3.legend()
-                    
-                    plt.savefig(f'{self.path_prefix}_fits/rot_acf_{block}_{res1}_{atom_name1}_csa_ct.pdf')
-                    plt.clf()
-                    plt.close()
+                    if plot_status:
+                        cts = [ct_xx, ct_yy, ct_xy]
+                        values = [values_xx, values_yy, values_xy]
+                        self.plot_csa_tcfs(values, time, cts, block, res1, atom_name1)
 
             #close the parameter files!
             params_out.close()
