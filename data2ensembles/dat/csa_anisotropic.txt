@@ -1,0 +1,16 @@
+# these are the full CSA tensors 
+# taken from Measurement of Ribose Carbon Chemical Shift Tensors for A-form RNA by Liquid Crystal NMR Spectroscopy
+# xx yy zz
+C1' A 17.7e-6 -0.89e-6 -16.8e-6
+C1' T 17.7e-6 -0.89e-6 -16.8e-6
+C1' G 17.7e-6 -0.89e-6 -16.8e-6
+C1' C 17.7e-6 -0.89e-6 -16.8e-6
+# The CSA tensors for the bases are taken from: 
+# Chemical Shift Tensors of Protonated Base Carbons in Helical RNA and DNA from NMR Relaxation and Liquid Crystal Measurements
+# xx yy zz 
+C2 A 89e-6 15e-6 -104e-6
+C5 C 82e-6 2e-6 -85e-6
+C6 C 96e-6 19e-6 -115e-6
+C6 T 95e-6 -1e-6 -96e-6
+C8 G 74e-6 5e-6 -79e-6
+C8 A 80e-6 5e-6 -85e-6
