@@ -4,6 +4,7 @@ import data2ensembles.mathFuncs as mathFunc
 import data2ensembles.rates
 import data2ensembles as d2e
 import data2ensembles.structureUtils as strucUtils
+import data2ensembles.trrAnalysis_extensions as trrExtensions
 #import data2ensembles.csa_spec_dens as csa_spec_dens
 
 
@@ -632,18 +633,20 @@ class AnalyseTrr():
         by Kresten in the absurder paper.
         '''
 
-        total = 0
-        for i in range(self.curve_count):
-            i = i+1
-            amp = 'amp_%i'%(i)
-            time = 'time_%i'%(i)
-            total = total + Params[amp]*(np.e**(-1*x/Params[time]))
+        total = trrExtensions.correlation_function(Params, x, self.curve_count, theta)
 
-        #this is for the vectors that are not aligned with eachother
-        if theta != 0:
-            total = (1.5*np.cos(theta)**2 - 0.5)*total
+        # total = 0
+        # for i in range(self.curve_count):
+        #     i = i+1
+        #     amp = 'amp_%i'%(i)
+        #     time = 'time_%i'%(i)
+        #     total = total + Params[amp]*(np.e**(-1*x/Params[time]))
 
-        total = total + Params['S_long']
+        # #this is for the vectors that are not aligned with eachother
+        # if theta != 0:
+        #     total = (1.5*np.cos(theta)**2 - 0.5)*total
+
+        # total = total + Params['S_long']
         return total
 
     def spectral_density_fuction(self,params, omega, dummy_tauc=5e-6, theta=0):
