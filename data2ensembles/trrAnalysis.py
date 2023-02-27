@@ -228,7 +228,8 @@ class AnalyseTrr():
                         csa_ignore_list=[], 
                         skip=1000, 
                         calc_average_structure=True, 
-                        write_out_angles=False):
+                        write_out_angles=False, 
+                        delete_rmsf_file=True):
 
         # try calculating the principle axis with gromacs
         # then average them and determine all the angles and 
@@ -242,10 +243,14 @@ class AnalyseTrr():
 
         # calculate average structure
         average_pdb = self.path_prefix+'_average.pdb'
+        rmsf_file = self.path_prefix+'_rmsf.xvg'
 
         if calc_average_structure == True:
-            gmx_command = f'{self.gmx} rmsf -f {self.xtc} -s {self.gro} -dt 1000 -ox {average_pdb} << EOF\n 0 \nEOF'
+            gmx_command = f'{self.gmx} rmsf -f {self.xtc} -s {self.gro} -dt 1000 -ox {average_pdb} -o {rmsf_file} << EOF\n 0 \nEOF'
             os.system(gmx_command)
+        if delete_rmsf_file:
+            os.remove(rmsf_file)
+
 
         self.average_uni = md.Universe(average_pdb)
 
