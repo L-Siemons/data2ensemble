@@ -7,6 +7,7 @@ import random as r
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import glob
+import re
 
 class AbsrudAnalysis():
     """A class to reweigth relaxation rates using absurd and absurder 
@@ -43,6 +44,15 @@ class AbsrudAnalysis():
             self.calc_rates[i] = current_calc_rates
             self.calc_rate_files[i] = files
 
+        entry1 = list(self.exp_rates.keys())[0]
+        self.residues = {}
+
+        for i in self.exp_rates[entry1].keys():
+            res = re.findall(r'\d+', i)[0]
+            if res not in self.residues:
+                self.residues[res] = []
+            self.residues[res].append(i)
+
     def calc_optimised_rates(self,optimisation_type):
 
         if optimisation_type == 'absurd':
@@ -64,6 +74,30 @@ class AbsrudAnalysis():
                     collected_rates = np.array(collected_rates)
                     collected_rates = np.mean(collected_rates,axis=0)
                     self.optimised_rates[rates][atom_pair] = collected_rates
+
+    def calc_optimised_rates_per_residue(self):
+
+
+        self.optimised_rates = {}
+
+        for residue in self.residues:
+            
+            index_list = self.per_residue_index[residue]
+
+            for rates in self.exp_rates:
+                if rates not in self.optimised_rates:
+                    self.optimised_rates[rates] = {}
+                for atom_pair in self.exp_rates[rates]:
+                    if atom_pair in self.residues[residue]:
+                        if atom_pair in self.calc_rates[rates][0]:
+                            collected_rates = []
+                            for i in index_list:
+                                #print(self.calc_rates[rates][atom_pair])
+                                collected_rates.append(self.calc_rates[rates][i][atom_pair])
+
+                            collected_rates = np.array(collected_rates)
+                            collected_rates = np.mean(collected_rates,axis=0)
+                            self.optimised_rates[rates][atom_pair] = collected_rates
 
     def write_optimised_rates(self, suffix='_opt.dat'):
 
@@ -129,5 +163,71 @@ class AbsrudAnalysis():
         self.absurd_indexes = new_gene
         plt.plot(iteration_x, iteration_y)
         plt.show()
+
+    def run_absurd_per_residue(self, gene_length, mutation_chance=0.1, cycles=1e4):
+
+        def target_function(index_list, residue):
+            total_diffs = []
+
+            for rates in self.exp_rates:
+                for atom_pair in self.exp_rates[rates]:
+                    if atom_pair in self.residues[residue]:
+                        if atom_pair in self.calc_rates[rates][0]:
+                            collected_rates = []
+                            for i in index_list:
+                                #print(self.calc_rates[rates][atom_pair])
+                                collected_rates.append(self.calc_rates[rates][i][atom_pair])
+
+                            collected_rates = np.array(collected_rates)
+                            collected_rates = np.mean(collected_rates,axis=0)
+                            diffs = (collected_rates-self.exp_rates[rates][atom_pair])**2/self.exp_errors[rates][atom_pair]
+                            total_diffs.append(diffs)
+            
+            total_diffs = np.array(total_diffs)
+            diffs_mean = np.mean(total_diffs)          
+            return diffs_mean
+
+        cycles = int(cycles)
+        self.per_residue_index = {}
+        
+        for residue in self.residues:
+
+            keys = list(self.calc_rate_files.keys())
+            index_list = [i for i in range(len(self.calc_rate_files[keys[0]]))]
+            
+            prev_gene = r.sample(index_list, gene_length)
+            prev_score = target_function(prev_gene, residue)
+
+            iteration_x = []
+            iteration_y = []
+            
+
+
+            for iteration in range(cycles):
+
+                main_list = list(set(index_list) - set(prev_gene))
+                new_gene = copy.copy(prev_gene)
+
+                for i in range(gene_length):
+                    mutation = r.random() < mutation_chance
+                    if mutation:
+                        new_gene[i] = r.sample(main_list, 1)[0]
+
+                new_score = target_function(new_gene, residue)
+                
+                if new_score < prev_score:
+                    iteration_x.append(iteration)
+                    iteration_y.append(new_score)
+                
+                    prev_score = copy.copy(new_score)
+                    prev_gene = copy.copy(new_gene)
+                    print(f'Iteration {iteration} score: {prev_score}')
+
+            # save the best index
+            self.per_residue_index[residue] = copy.copy(prev_gene)
+        
+        # self.absurd_indexes = new_gene
+        # plt.plot(iteration_x, iteration_y)
+        # plt.show()
 
 
