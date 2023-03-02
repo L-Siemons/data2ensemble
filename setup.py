@@ -17,7 +17,7 @@ setup(
     packages=find_packages(),
     #ext_modules=cythonize("data2ensembles/csa_spec_dens.pyx"),
     #license='LICENSE.txt',
-    package_data={'data2ensembles': ['dat/*dat']},
+    package_data={'data2ensembles': ['dat/*dat'],  ['dat/*txt']},
     include_package_data=True,
     description=descrip,
     include_dirs=[np.get_include()]

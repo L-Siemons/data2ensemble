@@ -1,1 +1,2 @@
 include data2ensembles/dat/*dat
+include data2ensembles/dat/*txt
