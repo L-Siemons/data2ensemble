@@ -249,7 +249,10 @@ class AnalyseTrr():
             gmx_command = f'{self.gmx} rmsf -f {self.xtc} -s {self.gro} -dt 1000 -ox {average_pdb} -o {rmsf_file} << EOF\n 0 \nEOF'
             os.system(gmx_command)
         if delete_rmsf_file:
-            os.remove(rmsf_file)
+            try:
+                os.remove(rmsf_file)
+            except FileNotFoundError:
+                pass
 
 
         self.average_uni = md.Universe(average_pdb)
