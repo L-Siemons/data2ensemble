@@ -465,7 +465,7 @@ class AnalyseTrr():
             for i in tqdm(selections):
 
                 current = np.array(selections[i])
-                print(i, current)
+                #print(i, current)
                 time_array = np.array(time_list[i])*timestep
                 d11 = np.array(current[:,1].astype(float))
                 d22 = np.array(current[:,2].astype(float))
