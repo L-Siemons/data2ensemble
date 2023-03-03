@@ -331,7 +331,7 @@ class AnalyseTrr():
 
     def calc_rotacf(self, indx_file, atom_names, b=None, e=None, dt=None, xtc=None, 
                     timestep=2e-12, calc_csa_tcf=False, csa_tcf_skip=100, 
-                    max_csa_ct_diff=30e-9, write_csa_pas=False, csa_tcf_evaluation_steps=100):
+                    max_csa_ct_diff=30e-9, write_csa_pas=False, csa_tcf_evaluation_steps=100, csa_ignore_list=[]):
         '''
         calculate the rotational correlation function using gromacs 
 
@@ -405,8 +405,9 @@ class AnalyseTrr():
             time_list = {}
 
             for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(atom_info):
-                selections[(res1, atom_name1)] = []
-                time_list[(res1, atom_name1)] = []
+                if [atom_name1, atom_name2] not in csa_ignore_list:
+                    selections[(res1, atom_name1)] = []
+                    time_list[(res1, atom_name1)] = []
 
             # currently this takes too long. I could make this shorter by using only a fraction of the points
             # Maybe say every 50-100 points. This looks like it should decay slow enough to catch the main motions 
@@ -422,14 +423,16 @@ class AnalyseTrr():
                 time = self.uni.trajectory.time
 
                 for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(atom_info):
-                    atom1_resname = self.resid2type[res1][1]
 
-                    d_selected, (d11, d22, d33) = mathFunc.calc_csa_axis(res1, atom_name1, 
-                                                        self.csa_tensor_transform[atom1_resname][atom_name1], 
-                                                        self.uni)
+                    if [atom_name1, atom_name2] not in csa_ignore_list:
+                        atom1_resname = self.resid2type[res1][1]
 
-                    time_list[(res1, atom_name1)].append(time)
-                    selections[(res1, atom_name1)].append([d11, d22, d33])
+                        d_selected, (d11, d22, d33) = mathFunc.calc_csa_axis(res1, atom_name1, 
+                                                            self.csa_tensor_transform[atom1_resname][atom_name1], 
+                                                            self.uni)
+
+                        time_list[(res1, atom_name1)].append(time)
+                        selections[(res1, atom_name1)].append([d11, d22, d33])
 
             # def wite out the vectors
             if write_csa_pas == True: 
@@ -454,13 +457,15 @@ class AnalyseTrr():
             csa_ct_yy = {}
             csa_ct_xy = {}
 
+
             print('Calculating C(t) for CSA principle axis:')
             print(f'CSA c(t) cutoff is {max_csa_ct_diff}')
             print(f'This is about {int(max_csa_ct_diff/(csa_tcf_skip*timestep))} steps')
-
+            #print(selections)
             for i in tqdm(selections):
 
                 current = np.array(selections[i])
+                print(i, current)
                 time_array = np.array(time_list[i])*timestep
                 d11 = np.array(current[:,1].astype(float))
                 d22 = np.array(current[:,2].astype(float))
@@ -947,7 +952,8 @@ class AnalyseTrr():
 
     def fit_all_correlation_functions(self,
         atom_names, time_threshold=10e-9,
-        log_time_min=50, log_time_max=5000,blocks=True, calc_csa_tcf=False):
+        log_time_min=50, log_time_max=5000,blocks=True, calc_csa_tcf=False, 
+        ignore_list=[]):
 
         def write_line_to_params_files(values, file, curve_count=self.curve_count):
 
@@ -1003,66 +1009,68 @@ class AnalyseTrr():
             for res1, res2, atom_name1, atom_name2 in atom_info:
 
                 #file IO
-                if blocks == True:
-                    name = f"{self.path_prefix}_rotacf/rotacf_block_{block}_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
-                else:
-                    name = f"{self.path_prefix}_rotacf/rotacf_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
+                if [atom_name1, atom_name2] not in ignore_list:
 
-                # should we plot the figure for this ?
-                plot_chance = r.random()
-                plot_status = plot_chance < self.plotfraction
-                print('>fitting rotacf for:', name)
+                    if blocks == True:
+                        name = f"{self.path_prefix}_rotacf/rotacf_block_{block}_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
+                    else:
+                        name = f"{self.path_prefix}_rotacf/rotacf_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
 
-                #Sometimes we dont want to fit the whole Ci(t) as it will often plateau. This time is in ps
-                temp = self.read_gmx_xvg(name)
-                x = temp.T[0]
-                y = temp.T[1]
+                    # should we plot the figure for this ?
+                    plot_chance = r.random()
+                    plot_status = plot_chance < self.plotfraction
+                    print('>fitting rotacf for:', name)
 
-                #print(min(x), max(x), time_threshold)
-                y = y[x<time_threshold]
-                x = x[x<time_threshold]
+                    #Sometimes we dont want to fit the whole Ci(t) as it will often plateau. This time is in ps
+                    temp = self.read_gmx_xvg(name)
+                    x = temp.T[0]
+                    y = temp.T[1]
 
-                #print('starting fit ...')
-                result = self.fit_correlation_function(x,y)
-                values = result.params.valuesdict()
+                    #print(min(x), max(x), time_threshold)
+                    y = y[x<time_threshold]
+                    x = x[x<time_threshold]
 
-                #put the plotting in!
-                if plot_status == True:
-                    self.plot_correlation_function(values, x, y, block, res1, atom_name1)
+                    #print('starting fit ...')
+                    result = self.fit_correlation_function(x,y)
+                    values = result.params.valuesdict()
 
-                #residues_pbar.update()
-                write_line_to_params_files(values, params_out)
+                    #put the plotting in!
+                    if plot_status == True:
+                        self.plot_correlation_function(values, x, y, block, res1, atom_name1)
 
-                if calc_csa_tcf == True:
+                    #residues_pbar.update()
+                    write_line_to_params_files(values, params_out)
 
-                    csa_name = f'{self.path_prefix}_rotacf/csa_ct_{res1}_{atom_name1}.xvg'
-                    print(csa_name)
-                    temp = self.read_gmx_xvg(csa_name)
-                    time = temp.T[0]
-                    ct_xx = temp.T[1][time < time_threshold]
-                    ct_yy = temp.T[2][time < time_threshold]
-                    ct_xy = temp.T[3][time < time_threshold]
-                    time = time[time < time_threshold]
+                    if calc_csa_tcf == True:
 
-                    # fit the CSA c(t)s
-                    result_xx = self.fit_correlation_function(time,ct_xx)
-                    result_yy = self.fit_correlation_function(time,ct_yy)
-                    result_xy = self.fit_correlation_function(time,ct_xy, theta=np.pi/2)
-                    
-                    # make vaues dicts
-                    values_xx = result_xx.params.valuesdict()
-                    values_yy = result_yy.params.valuesdict()
-                    values_xy = result_xy.params.valuesdict()
+                        csa_name = f'{self.path_prefix}_rotacf/csa_ct_{res1}_{atom_name1}.xvg'
+                        print(csa_name)
+                        temp = self.read_gmx_xvg(csa_name)
+                        time = temp.T[0]
+                        ct_xx = temp.T[1][time < time_threshold]
+                        ct_yy = temp.T[2][time < time_threshold]
+                        ct_xy = temp.T[3][time < time_threshold]
+                        time = time[time < time_threshold]
 
-                    #write the lines to the respective files!
-                    write_line_to_params_files(values_xx, params_out_csa_xx)
-                    write_line_to_params_files(values_yy, params_out_csa_yy)
-                    write_line_to_params_files(values_xy, params_out_csa_xy)
+                        # fit the CSA c(t)s
+                        result_xx = self.fit_correlation_function(time,ct_xx)
+                        result_yy = self.fit_correlation_function(time,ct_yy)
+                        result_xy = self.fit_correlation_function(time,ct_xy, theta=np.pi/2)
+                        
+                        # make vaues dicts
+                        values_xx = result_xx.params.valuesdict()
+                        values_yy = result_yy.params.valuesdict()
+                        values_xy = result_xy.params.valuesdict()
 
-                    if plot_status:
-                        cts = [ct_xx, ct_yy, ct_xy]
-                        values = [values_xx, values_yy, values_xy]
-                        self.plot_csa_tcfs(values, time, cts, block, res1, atom_name1)
+                        #write the lines to the respective files!
+                        write_line_to_params_files(values_xx, params_out_csa_xx)
+                        write_line_to_params_files(values_yy, params_out_csa_yy)
+                        write_line_to_params_files(values_xy, params_out_csa_xy)
+
+                        if plot_status:
+                            cts = [ct_xx, ct_yy, ct_xy]
+                            values = [values_xx, values_yy, values_xy]
+                            self.plot_csa_tcfs(values, time, cts, block, res1, atom_name1)
 
             #close the parameter files!
             params_out.close()
