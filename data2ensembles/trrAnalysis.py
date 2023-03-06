@@ -169,7 +169,7 @@ class AnalyseTrr():
         values = []
         #print('opening file ...')
         fi = open(f)
-        print(f'Reading; {f}')
+        #print(f'Reading; {f}')
         for i in fi.readlines():
             if i[0] not in ('#', '@'):
                 s = i.split()
