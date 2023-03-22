@@ -77,6 +77,51 @@ def anisotropic_csa_in_anisotropic_diffusion(params, spectral_density, omega,
     term3 = 12*sig_diffyy*sig_diffxx*jxy
     return term1 + term2 + term3
 
+def r1_YX_dipollar(params, spectral_density, fields,
+    rxy, x, y='h', 
+    cosine_angles = [], omega_x=None, omega_y=None,
+    PhysQ=PhysicalQuantities):
+    '''
+    This function calculates only the dipolar contributions to the R1
+    '''
+
+    if omega_x.all() == None:
+        omega_x = PhysQ.calc_omega(x, fields)
+    if omega_y.all() == None:
+        omega_y = PhysQ.calc_omega(y, fields)  
+
+    print('here boiii', omega_y)
+
+    dd_prefactor = (PhysQ.calc_dd(x,y,rxy)**2)/4
+    omega_x = PhysQ.calc_omega(x, fields)
+    omega_y = PhysQ.calc_omega(y, fields)  
+
+    term1 = dd_prefactor*(spectral_density(params, [omega_y-omega_x]+cosine_angles) + \
+                       3.*spectral_density(params, [omega_x]+cosine_angles) + \
+                       6.*spectral_density(params, [omega_y+omega_x]+cosine_angles))
+
+    return term1
+
+def r1_YX_csa(params, spectral_density, fields,
+    csa_atom_name, x, y, csa_cosine_angles, csa_params,
+    PhysQ):
+
+    csa_j_term = anisotropic_csa_in_anisotropic_diffusion(params, spectral_density, omega_x,
+    csa_atom_name, csa_params ,csa_cosine_angles, 
+    PhysQ=PhysQ)
+
+    csa_prefactor = PhysQ.calc_aniso_csa_prefactor(fields, x, csa_atom_name)
+
+    #check the csa prefactor is right!
+    term2 = csa_prefactor*csa_j_term
+
+    # this line below is for the axially symetric CSA 
+    # term2 = csa_prefactor*spectral_density(params, [omega_x]+csa_cosine_angles)
+    #print(term1, term2, term1/term2)
+    #print('R1', term2/(term1 + term2))
+    #print(f'{x} {y} {dd_prefactor} {csa_prefactor} {dd_prefactor/csa_prefactor:.2f} {rxy} {csa_atom_name}')
+    return term2
+
 def r1_YX(params, spectral_density, fields,
     rxy, csa_atom_name, x, y='h', 
     cosine_angles = [], csa_cosine_angles=None, csa_params=None,
@@ -94,29 +139,21 @@ def r1_YX(params, spectral_density, fields,
     cosine_angles - these are a list that can be used to pass additional paremeters to spectral_density
      '''
 
-    dd_prefactor = (PhysQ.calc_dd(x,y,rxy)**2)/4
-    #csa_prefactor = PhysQ.calc_iso_csa(fields, x, csa_atom_name)**2
     omega_x = PhysQ.calc_omega(x, fields)
     omega_y = PhysQ.calc_omega(y, fields)  
 
-    term1 = dd_prefactor*(spectral_density(params, [omega_y-omega_x]+cosine_angles) + \
-                       3.*spectral_density(params, [omega_x]+cosine_angles) + \
-                       6.*spectral_density(params, [omega_y+omega_x]+cosine_angles))
+    term1 = r1_YX_dipollar(params, 
+        spectral_density, 
+        fields, rxy, x, y='h', 
+        cosine_angles = csa_cosine_angles, 
+        omega_x=omega_x, 
+        omega_y=omega_y,
+        PhysQ=PhysicalQuantities)
 
-    csa_j_term = anisotropic_csa_in_anisotropic_diffusion(params, spectral_density, omega_x,
-    csa_atom_name, csa_params ,csa_cosine_angles, 
-    PhysQ=PhysQ)
+    term2 = r1_YX_csa(params, spectral_density, fields,
+    csa_atom_name, x, y, csa_cosine_angles, csa_params,
+    PhysQ)
 
-    csa_prefactor = PhysQ.calc_aniso_csa_prefactor(fields, x, csa_atom_name)
-
-    #check the csa prefactor is right!
-    term2 = csa_prefactor*csa_j_term
-
-    # this line below is for the axially symetric CSA 
-    # term2 = csa_prefactor*spectral_density(params, [omega_x]+csa_cosine_angles)
-    #print(term1, term2, term1/term2)
-    #print('R1', term2/(term1 + term2))
-    #print(f'{x} {y} {dd_prefactor} {csa_prefactor} {dd_prefactor/csa_prefactor:.2f} {rxy} {csa_atom_name}')
     return term1 + term2
 
 
