@@ -24,7 +24,7 @@ class PhysicalQuantities(object):
         self.hbar = scipy.constants.hbar
         
         #read the CSA 
-        self.csa_isotropic = {}
+        self.csa_axially_symetric = {}
         file = pkg_resources.resource_filename('data2ensembles', 'dat/csa_dft_v2.dat')
         file = open(file, 'r')
         for i in file.readlines():
@@ -36,7 +36,7 @@ class PhysicalQuantities(object):
                     if float(s[2]) > 1e-2: 
                         print('WARNING: The csa is rather large, did you miss a e-6?')
                         print(i)
-                    self.csa_isotropic[key] = float(s[2])
+                    self.csa_axially_symetric[key] = float(s[2])
         file.close()
 
         # read in the anisotropic CSA
@@ -91,7 +91,7 @@ class PhysicalQuantities(object):
 
         return d
 
-    def calc_iso_csa(self, field, x, csa_atom_name):
+    def calc_axially_symetric_csa(self, field, x, csa_atom_name):
         '''
         Calculate the isotropic CSA
         field - magnetic field in tesla
@@ -101,10 +101,10 @@ class PhysicalQuantities(object):
 
         # the factor of 2pi is needed to keep it in omega!
         omega = self.calc_omega(x, field)
-        csa_total = omega*self.csa_isotropic[csa_atom_name]/np.sqrt(3)
+        csa_total = omega*self.csa_axially_symetric[csa_atom_name]/np.sqrt(3)
         return csa_total
 
-    def calc_aniso_csa_prefactor(self, field, x, csa_atom_name):
+    def calc_aniso_csa_prefactor(self, field, x, csa_atom_name, square=True):
         '''
         Calculate the isotropic CSA
         field - magnetic field in tesla
@@ -114,8 +114,12 @@ class PhysicalQuantities(object):
 
         # the factor of 2pi is needed to keep it in omega!
         omega = self.calc_omega(x, field)
-        csa_total = (2/36)*omega**2
-        return csa_total
+        if square == True:
+            csa_total = (2/36)*omega**2
+            return csa_total
+        else:
+            csa_total = (2/36)*omega
+            return csa_total
 
 
 def read_nmr_relaxation_rate(file):
