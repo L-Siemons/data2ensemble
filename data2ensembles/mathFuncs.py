@@ -1,5 +1,7 @@
 import numpy as np 
 from scipy.spatial.transform import Rotation as R
+from scipy import linalg as scilinalg
+import math
 
 # some trig functions
 def sin_square(a):
@@ -9,6 +11,13 @@ def sin_square(a):
 def cos_square(a):
     b = np.cos(a)
     return b**2
+
+def distance(a,b):
+    '''
+    calculates the distance between two points - this is here incase I want to speed up with 
+    cython
+    '''
+    return math.dist(a,b)
 
 def cosine_angles(vec, axis):
 
@@ -85,6 +94,27 @@ def calculate_anisotropic_d_amps(dx, dy,dz, ex,ey,ez):
         amplitudes = [1]
 
     return taus, amplitudes
+
+def construct_operator(matricies, times, product=True):
+
+    # the order in which these operators are listed I *think* is correct once we reverse them 
+    # also check that the axis rolling is not transposing the matrix. Probably should look at this 
+    # with an example
+
+    # to deal with weather we have alist of matricies or just one.
+
+    if matricies.shape[-1] != 1:
+        operators = [scilinalg.expm(-1*r*t) for r,t in zip(np.rollaxis(matricies, 2), times)]
+    elif matricies.shape[-1] == 1: 
+        roll = np.rollaxis(matricies, 2)
+        operators = [scilinalg.expm(-1*roll[0]*t) for t in times]
+
+    # do we want to return the product of the list
+    if product==True:
+        final_poperator = np.linalg.multi_dot(np.flip(operators))
+        return final_poperator
+    else:
+        return operators
 
 def calc_csa_axis(resid, atomname, csa_orientations_info, uni):
     '''
