@@ -16,27 +16,38 @@ class ShuttleTrajectory():
 
 		added_fields = []
 		self.fields_distances = []
-		self.sampled_fields = {}
+		self.sampled_fields = []
+		self.experiment_info = {}
 
 		# this section assumes that the fields file is written in assending order
 		for i in self.fields_distances_total:
-			self.fields_distances.append(i)
-			added_fields.append(i[1])
+			field_i = round(i[1],1)
+			if field_i not in added_fields:
+				self.fields_distances.append(i)
+				added_fields.append(field_i)
 
 		self.fields_distances = np.array(self.fields_distances)
 		self.fields_distances_dict = {}
 
-		for i in self.fields_distances:
+		for i in self.fields_distances_total:
 			self.fields_distances_dict[i[1]] = i[0]
 
 		fields_data = np.genfromtxt(fields_file, delimiter="\t", dtype=None)
 		for i in fields_data:
-			self.sampled_fields[float(i[0])] = [float(i[1]), i[2]]
+			field = float(i[1])
+			self.experiment_info[field] = {}
+			self.experiment_info[field]['high_field'] = float(i[0])
+			self.experiment_info[field]['travel_time'] = float(i[2])
+			self.experiment_info[field]['stabalisation_delay'] = float(i[3])
+			self.experiment_info[field]['delays'] = [float(a) for a in i[4:]]
+			self.sampled_fields.append(field)
+
+		self.sampled_fields = np.array(self.sampled_fields)
 
 	def construct_single_trajectory(self, field, all_dists, all_fields):
 
 		# get the travel time set by the user 
-		travel_time = self.sampled_fields[field][0]
+		travel_time = self.experiment_info[field]['travel_time']
 		half_time = travel_time/2
 		
 		# the distance that corresponds to the field
