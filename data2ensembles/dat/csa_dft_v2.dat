@@ -12,3 +12,9 @@ C1' G 73.85e-6
 C8  G 101.8e-6
 C1' T 68.09e-6
 C6  T 135.54e-6
+#these were taken from the DFT calculations in 
+# /Users/lucassiemons/Desktop/important_stuff/Work_school_university/2021_dna_relaxometry/dft/1_dntp_cs/4_restraied_cs_v2
+H1' A 8.05e-6
+H1' T 8.44e-6
+H1' C 9.42e-6
+H1' G 8.56e-6
