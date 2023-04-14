@@ -337,7 +337,7 @@ class AnalyseTrr():
                 angles_out.write(f'{res1}\t{atom_name1}\t{angx}\t{angy}\t{angz}\n')
 
 
-            if [atom_name1, atom_name2] in csa_ignore_list:
+            if (atom_name1, atom_name2) in csa_ignore_list:
                 csa_atom_chcek = False
             else:
                 csa_atom_chcek = True
@@ -1074,7 +1074,7 @@ class AnalyseTrr():
                     write_line_to_params_files(values, params_out)
 
                     if calc_csa_tcf == True:
-                        if [atom_name1, atom_name2] not in csa_ignore_list:
+                        if (atom_name1, atom_name2) not in csa_ignore_list:
                             csa_name = f'{self.path_prefix}_rotacf/csa_ct_{res1}_{atom_name1}.xvg'
                             print(csa_name)
                             temp = self.read_gmx_xvg(csa_name)
@@ -1635,9 +1635,6 @@ class AnalyseTrr():
 
             f.write(name +' ' + ' '.join([str(round(a,4)) for a in data[1]]) + '\n')
         f.close()
-
-
-
 
 
     def fit_diffusion_to_r1_r2_hetnoe(self, r1_file, r1_error, r2_file, r2_error, hetNoe_file, hetNoe_errors, spectral_density_file,

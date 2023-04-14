@@ -160,6 +160,7 @@ def read_fitted_spectral_density(f):
             if len(s) > 1 :
                 resid = int(s[0])
                 atoms = s[1]
+                atoms_reversed = ','.join(list(reversed(atoms.split(','))))
                 S_long = float(s[2])
                 time = [float(j) for j in s[4].split(',')]
                 amps = [float(j) for j in s[3].split(',')]
@@ -176,6 +177,9 @@ def read_fitted_spectral_density(f):
                     params[time_tag]  = timei
 
                 data[(resid, atoms)] = params
+                # this is so we dont have to check the direction of 
+                # the spectral density function each time, uses more memory but saves coding later
+                data[(resid, atoms_reversed)] = params
 
     f.close()
     return data
