@@ -4,6 +4,8 @@ import data2ensembles.mathFuncs as mathFunc
 import data2ensembles.rates
 import data2ensembles as d2e
 import data2ensembles.structureUtils as strucUtils
+import data2ensembles.shuttling as shuttling
+import data2ensembles.relaxation_matricies as relax_mat
 #import data2ensembles.csa_spec_dens as csa_spec_dens
 
 
@@ -76,6 +78,8 @@ class AnalyseTrr():
         self.unaligned_xtc = None
         self.gro = gro
         self.path_prefix = path_prefix
+        self.relaxometry_experiment_details_file = None
+        self.relaxometry_inensities = {}
 
 
         # the number of curves to use when fitting the internal correlation functions
@@ -221,6 +225,34 @@ class AnalyseTrr():
                         atom_info.append([i.resid, i.resid, a[0], a[1]])
 
         return atom_info
+
+    def calc_inter_atom_distances(self, atom_names, skip=1000):
+
+        print('calculating MD distances')
+        atom_info = self.make_atom_pairs_list(atom_names)
+        selections = {}
+        distances = {}
+        for res1, res2, atom_name1, atom_name2 in atom_info:
+
+            key = (res1, atom_name1, atom_name2)
+            sel1 = f'resid {res1} and name {atom_name1}'
+            sel2 = f'resid {res2} and name {atom_name2}'
+            sele = [self.uni.select_atoms(sel1)[0], self.uni.select_atoms(sel2)[0]]
+            selections[key] = sele
+            distances[key]= []
+
+        for ts in tqdm(self.uni.trajectory[::skip]):
+
+            for pair in selections:
+
+                pos1 = selections[pair][0].position
+                pos2 = selections[pair][1].position
+                dist = mathFunc.distance(pos1, pos2)
+                distances[pair].append(dist)
+
+        for i in distances:
+            distances[i] = np.mean(distances[i])*1e-10
+        self.md_distances = distances
 
     def calc_cosine_angles(self,
                         atom_names, 
@@ -953,7 +985,7 @@ class AnalyseTrr():
     def fit_all_correlation_functions(self,
         atom_names, time_threshold=10e-9,
         log_time_min=50, log_time_max=5000,blocks=True, calc_csa_tcf=False, 
-        ignore_list=[]):
+        ignore_list=[], csa_ignore_list=[]):
 
         def write_line_to_params_files(values, file, curve_count=self.curve_count):
 
@@ -1042,35 +1074,35 @@ class AnalyseTrr():
                     write_line_to_params_files(values, params_out)
 
                     if calc_csa_tcf == True:
+                        if [atom_name1, atom_name2] not in csa_ignore_list:
+                            csa_name = f'{self.path_prefix}_rotacf/csa_ct_{res1}_{atom_name1}.xvg'
+                            print(csa_name)
+                            temp = self.read_gmx_xvg(csa_name)
+                            time = temp.T[0]
+                            ct_xx = temp.T[1][time < time_threshold]
+                            ct_yy = temp.T[2][time < time_threshold]
+                            ct_xy = temp.T[3][time < time_threshold]
+                            time = time[time < time_threshold]
 
-                        csa_name = f'{self.path_prefix}_rotacf/csa_ct_{res1}_{atom_name1}.xvg'
-                        print(csa_name)
-                        temp = self.read_gmx_xvg(csa_name)
-                        time = temp.T[0]
-                        ct_xx = temp.T[1][time < time_threshold]
-                        ct_yy = temp.T[2][time < time_threshold]
-                        ct_xy = temp.T[3][time < time_threshold]
-                        time = time[time < time_threshold]
+                            # fit the CSA c(t)s
+                            result_xx = self.fit_correlation_function(time,ct_xx)
+                            result_yy = self.fit_correlation_function(time,ct_yy)
+                            result_xy = self.fit_correlation_function(time,ct_xy, theta=np.pi/2)
+                            
+                            # make vaues dicts
+                            values_xx = result_xx.params.valuesdict()
+                            values_yy = result_yy.params.valuesdict()
+                            values_xy = result_xy.params.valuesdict()
 
-                        # fit the CSA c(t)s
-                        result_xx = self.fit_correlation_function(time,ct_xx)
-                        result_yy = self.fit_correlation_function(time,ct_yy)
-                        result_xy = self.fit_correlation_function(time,ct_xy, theta=np.pi/2)
-                        
-                        # make vaues dicts
-                        values_xx = result_xx.params.valuesdict()
-                        values_yy = result_yy.params.valuesdict()
-                        values_xy = result_xy.params.valuesdict()
+                            #write the lines to the respective files!
+                            write_line_to_params_files(values_xx, params_out_csa_xx)
+                            write_line_to_params_files(values_yy, params_out_csa_yy)
+                            write_line_to_params_files(values_xy, params_out_csa_xy)
 
-                        #write the lines to the respective files!
-                        write_line_to_params_files(values_xx, params_out_csa_xx)
-                        write_line_to_params_files(values_yy, params_out_csa_yy)
-                        write_line_to_params_files(values_xy, params_out_csa_xy)
-
-                        if plot_status:
-                            cts = [ct_xx, ct_yy, ct_xy]
-                            values = [values_xx, values_yy, values_xy]
-                            self.plot_csa_tcfs(values, time, cts, block, res1, atom_name1)
+                            if plot_status:
+                                cts = [ct_xx, ct_yy, ct_xy]
+                                values = [values_xx, values_yy, values_xy]
+                                self.plot_csa_tcfs(values, time, cts, block, res1, atom_name1)
 
             #close the parameter files!
             params_out.close()
@@ -1281,6 +1313,333 @@ class AnalyseTrr():
             r2_out.close()
             hetnoe_out.close()
 
+    def calculate_relaxometry_intensities(self, atom_names, diffusion_file, fields, 
+        x, y='h', blocks=False,dna=False, write_out=False, prefix='', ignore_atoms=[]):
+        '''
+        This function calculate r1 r2 and hetnoe at high field for a X-Y spin system
+        '''
+
+        try:
+            os.mkdir(f'{self.path_prefix}_calculated_relaxometry_intensities')
+        except FileExistsError:
+            pass
+
+        atom_info = self.make_atom_pairs_list(atom_names)
+
+        data = {}
+        params = {}
+        diffusion_values, diffusion_errors = utils.read_diffusion_tensor(diffusion_file)
+        print(f'Diffusion Tensor values: \ndx {diffusion_values[0]}\ndy {diffusion_values[1]}\ndz {diffusion_values[2]}')
+        axis = self.uni.select_atoms('all').principal_axes()
+
+        if blocks == False:
+            spec_file = self.path_prefix + '_fit_params/internal_correlations_0.dat'
+        else:
+            print('LUCAS YOU NEED TO CODE THIS!')
+
+        spectral_density_params = utils.read_fitted_spectral_density(spec_file)
+
+        csa_spectral_density_params = self.read_csa_spectra_density_params()
+        csa_xx_spectral_density_params, csa_yy_spectral_density_params, csa_xy_spectral_density_params = csa_spectral_density_params
+
+        #add diffusion values to the params
+        for i in spectral_density_params:
+            spectral_density_params[i] = self.add_diffution_spectral_density_params(spectral_density_params[i], diffusion_values)
+        
+        for i,j,k in zip(csa_xx_spectral_density_params, csa_yy_spectral_density_params, csa_xy_spectral_density_params):
+            csa_xx_spectral_density_params[i] = self.add_diffution_spectral_density_params(csa_xx_spectral_density_params[i], diffusion_values)
+            csa_yy_spectral_density_params[j] = self.add_diffution_spectral_density_params(csa_yy_spectral_density_params[j], diffusion_values)
+            csa_xy_spectral_density_params[k] = self.add_diffution_spectral_density_params(csa_xy_spectral_density_params[k], diffusion_values)
+
+
+        if write_out == True:
+            print('make the writing out files!')
+        
+        reduced_atom_info = []
+
+        # this could be prettier.
+        for res1, res2, atom_name1, atom_name2 in atom_info:
+            if [atom_name1, atom_name2] not in ignore_atoms:
+                reduced_atom_info.append([res1, res2, atom_name1, atom_name2])
+
+        # get times at each field
+        
+        if self.relaxometry_experiment_details_file != None:
+            print(f"Loading: {self.relaxometry_experiment_details_file}")
+            Shuttling = shuttling.ShuttleTrajectory(self.relaxometry_experiment_details_file)
+            Shuttling.construct_all_trajectories()
+        else:
+            print('Please provide the file with information on the shuttled experiments')
+            print('This is done by setting: AnalyseTrr.relaxometry_experiment_details_file')
+
+        for res1, res2, atom_name1, atom_name2 in tqdm(reduced_atom_info):
+
+            # define the parameters
+            spectral_density_key = (res1, atom_name1+','+atom_name2)
+            #print(spectral_density_key)
+
+            # make the csa params object
+            csa_xx_params = csa_xx_spectral_density_params[spectral_density_key]
+            csa_yy_params = csa_yy_spectral_density_params[spectral_density_key]
+            csa_xy_params = csa_xy_spectral_density_params[spectral_density_key]
+            csa_params = (csa_xx_params, csa_yy_params, csa_xy_params)
+
+            if dna == True:
+                csa_atom_name = (atom_name1, self.resid2type[res1][1])
+                resname = self.resid2type[res1][1]
+
+                csa_atom_name_y = (atom_name2, self.resid2type[res1][1])
+                resname = self.resid2type[res1][1]
+            else:
+                csa_atom_name = (atom_name1, self.resid2type[res1])
+                csa_atom_name_y = (atom_name2, self.resid2type[res1])
+                resname = self.resid2type[res1]
+
+
+            # the information for the relaxation matrix is stored in a dictonary.
+            # where the key specifies the atom name 
+            params_dict = {}
+            spectral_density = self.spectral_density_anisotropic
+            rxy_dict = {}
+            csa_name_dict = {}
+            cos_ang_dict = {}
+            csa_cosine_angles_dict = {}
+            csa_params_dict = {}
+
+            if atom_name1 == "C1'":
+                
+                # these are the entries for the C1' pCz relaxation
+                key = (res1, "C1'", "H1'")
+                params_dict[key] = spectral_density_params[spectral_density_key]
+                rxy_dict[key] = PhysQ.bondlengths[atom_name1, atom_name2]
+                csa_name_dict[key] = csa_atom_name
+                cos_ang_dict[key] = self.cosine_angles[(res1, atom_name1, res2, atom_name2)]
+                csa_cosine_angles_dict[key] = self.csa_cosine_angles[(res1, atom_name1, res2, atom_name2)]
+                csa_params_dict[key] = csa_params
+
+                key = (res1, "C1'", "H2'1")
+                params_dict[key] = spectral_density_params[spectral_density_key]
+                rxy_dict[key] = PhysQ.bondlengths[atom_name1, atom_name2]
+                csa_name_dict[key] = csa_atom_name
+                cos_ang_dict[key] = self.cosine_angles[(res1, atom_name1, res2, atom_name2)]
+                csa_cosine_angles_dict[key] = self.csa_cosine_angles[(res1, atom_name1, res2, atom_name2)]
+                #csa_params_dict[key] = csa_params
+
+
+                key = (res1, "C1'", "H2'2")
+                params_dict[key] = spectral_density_params[spectral_density_key]
+                rxy_dict[key] = PhysQ.bondlengths[atom_name1, atom_name2]
+                csa_name_dict[key] = csa_atom_name
+                cos_ang_dict[key] = self.cosine_angles[(res1, atom_name1, res2, atom_name2)]
+                csa_cosine_angles_dict[key] = self.csa_cosine_angles[(res1, atom_name1, res2, atom_name2)]
+                #csa_params_dict[key] = csa_params
+
+                key = (res1, "H1'", "C1'")
+                params_dict[key] = spectral_density_params[spectral_density_key]
+                rxy_dict[key] = PhysQ.bondlengths[atom_name1, atom_name2]
+                cos_ang_dict[key] = self.cosine_angles[(res1, atom_name1, res2, atom_name2)]
+
+                # for now we will assume the the CSA is axially symetric and lies along the bond
+                csa_cosine_angles_dict[key] = cos_ang_dict[key]
+                csa_atom_name_proton = csa_atom_name_y
+                csa_name_dict[key] = csa_atom_name_proton
+                
+
+                # need to think about how to treat this ... 
+                # I could assume that it is axially symetric along the bond? 
+                cos_ang_dict[key] = self.cosine_angles[(res1, atom_name1, res2, atom_name2)]
+                csa_cosine_angles_dict[key] = self.csa_cosine_angles[(res1, atom_name1, res2, atom_name2)]
+
+                key = (res1, "H1'", "H2'1")
+                spectral_density_key = (res1, "H1',H2'1")
+                params_dict[key] = spectral_density_params[spectral_density_key]
+                rxy_dict[key] = self.md_distances[key]
+                cos_ang_dict[key] = self.cosine_angles[(res1, "H1'", res1,  "H2'1")]
+
+                key = (res1, "H1'", "H2'2")
+                spectral_density_key = (res1, "H1',H2'2")
+                params_dict[key] = spectral_density_params[spectral_density_key]
+                rxy_dict[key] = self.md_distances[key]
+                cos_ang_dict[key] = self.cosine_angles[(res1, "H1'", res1,  "H2'2")]
+
+
+                key = (res1, "H1'", "H4'")
+                spectral_density_key = (res1, "H1',H4'")
+                params_dict[key] = spectral_density_params[spectral_density_key]
+                rxy_dict[key] = self.md_distances[key]
+                cos_ang_dict[key] = self.cosine_angles[(res1, "H1'", res1,  "H2'2")]
+
+                key = (res1, "H2'1", "H2'2")
+                spectral_density_key = (res1, "H2'1,H2'2")
+
+                params_dict[key] = spectral_density_params[spectral_density_key]
+                rxy_dict[key] = self.md_distances[key]
+                cos_ang_dict[key] = self.cosine_angles[(res1, "H2'1", res1,  "H2'2")]
+
+                # get the propergators for each field
+                # I might save some time putting this loop before the residue loop
+                # print('outside', params_dict.keys())
+                self.relaxometry_inensities[(res1, "C1'", "H1'")] = {}
+
+                for i in Shuttling.sampled_fields:
+
+                    # print(f'field  {i}')
+
+                    traj = Shuttling.trajectory_time_at_fields[i]
+                    forwards_field, forwards_time, backwards_field, backwards_time = traj 
+
+                    relaxation_matricies_forwards = relax_mat.c1_prime_relaxation_matrix(params_dict, 
+                    res1, 
+                    spectral_density, 
+                    forwards_field, 
+                    rxy_dict, 
+                    csa_name_dict, 
+                    cos_ang_dict, 
+                    csa_cosine_angles_dict, 
+                    csa_params_dict,
+                    PhysQ)
+
+                    relaxation_matricies_backwards = relax_mat.c1_prime_relaxation_matrix(params_dict, 
+                    res1, 
+                    spectral_density, 
+                    backwards_field, 
+                    rxy_dict, 
+                    csa_name_dict, 
+                    cos_ang_dict, 
+                    csa_cosine_angles_dict, 
+                    csa_params_dict,
+                    PhysQ)
+
+                    relaxation_matricies_stablaization_delay = relax_mat.c1_prime_relaxation_matrix(params_dict, 
+                    res1, 
+                    spectral_density, 
+                    np.array([Shuttling.experiment_info[i]['high_field']]), 
+                    rxy_dict, 
+                    csa_name_dict, 
+                    cos_ang_dict, 
+                    csa_cosine_angles_dict, 
+                    csa_params_dict,
+                    PhysQ)
+
+                    
+                    forwrds_propergators = mathFunc.construct_operator(relaxation_matricies_forwards, forwards_time)
+                    backwards_operators = mathFunc.construct_operator(relaxation_matricies_backwards, backwards_time)
+                    stablaization_operator = mathFunc.construct_operator(relaxation_matricies_stablaization_delay,
+                        np.array([Shuttling.experiment_info[i]['stabalisation_delay']]), product=False)
+                    stablaization_operator = np.array(stablaization_operator)[0]
+                    #this is the matrix that evolves with the varriable delay
+                    low_field_relaxation_matrix = relax_mat.c1_prime_relaxation_matrix(params_dict, 
+                    res1, 
+                    spectral_density, 
+                    np.array([i]), 
+                    rxy_dict, 
+                    csa_name_dict, 
+                    cos_ang_dict, 
+                    csa_cosine_angles_dict, 
+                    csa_params_dict,
+                    PhysQ)
+
+                    delay_propergators = mathFunc.construct_operator(low_field_relaxation_matrix, 
+                                            Shuttling.experiment_info[i]['delays'], product=False)
+                    
+                    #full_propergators =  delay_propergators # [np.linalg.multi_dot([forwrds_propergators, i, backwards_operators]) for i in delay_propergators]
+                    full_propergators = [np.linalg.multi_dot([stablaization_operator, backwards_operators, i, forwrds_propergators]) for i in delay_propergators]
+
+                    experimets = np.zeros(10)
+                    experimets[2] = 1.
+
+                    intensities = [np.dot(i, experimets)[2] for i in full_propergators]
+                    self.relaxometry_inensities[(res1, "C1'", "H1'")][i] = [Shuttling.experiment_info[i]['delays'], intensities]
+
+                    # plt.scatter(Shuttling.experiment_info[i]['delays'], intensities)
+                    # plt.show()
+
+                # here I need
+                # 1) matricies for the transfer up and down
+                # 2) matricies for each relaxation point
+                # 3) then to make the propergators for this
+
+                # relaxation_matrix = relax_mat.c1_prime_relaxation_matrix(params_dict, 
+                #     res1, 
+                #     spectral_density, 
+                #     hrr_fields, 
+                #     rxy_dict, 
+                #     csa_name_dict, 
+                #     cos_ang_dict, 
+                #     csa_cosine_angles_dict, 
+                #     csa_params_dict,
+                #     PhysQ)
+
+                # simiulate the intensities 
+
+                # fit apparent R1 values ? 
+
+    def fit_apprent_rate_to_relaxometry(self):
+
+        def model(params, x):
+            return params['a']*np.e**(-1*params['r']*x)
+
+        def resid(params, x,y):
+            return y - model(params, x)
+
+        self.apparent_rates = {}
+
+        for i in self.relaxometry_inensities:
+            self.apparent_rates[i] = []
+            for field in self.relaxometry_inensities[i]:
+
+                x,y = self.relaxometry_inensities[i][field]
+                x = np.array(x)
+                y = np.array(y)
+
+                params = Parameters()
+                params.add('r', value=1)
+                params.add('a', value=0.11)
+                minner = Minimizer(resid, params, fcn_args=(x,y))
+                result = minner.minimize()
+                res_params = result.params.valuesdict()
+                report_fit(result)
+                self.apparent_rates[i].append([field, res_params['r']])
+
+                plt.scatter(x,y)
+                x_model = np.linspace(min(x), max(x), 20)
+                #print(x, x_model, min(x), max(x))
+                r = res_params['r']
+                plt.plot(x_model, model(res_params, x_model), label=f'field: {field:.1f}, Rate: {r:.1f}')
+
+            
+            plt.legend()
+            plt.show()
+
+    def write_apparent_relaxometry_rates(self, file_name='apparent_relaxometry_rates.dat'):
+
+        '''
+        Need to re-write this so the format matches the other rates files, mostly an issue with name tags 
+        '''
+
+        file = self.path_prefix + '_calculated_relaxation_rates/' + file_name
+        print(f'Writing apparent R1 rates to: {file}')
+        f = open(file, 'w')
+        f.write('#header bondName ')
+        header_check = False
+        for i in self.apparent_rates:
+            resname = self.resid2type[i[0]][1]
+            name = resname + str(i[0]) + str(i[2]) + '-' + resname + str(i[0]) + str(i[1])
+
+            data = np.array(self.apparent_rates[i])
+            data = data[data[:, 1].argsort()].T
+
+            if header_check == False:
+                header_check = True
+                f.write(' '.join([str(a) for a in data[0]]) + '\n')
+
+            f.write(name +' ' + ' '.join([str(round(a,4)) for a in data[1]]) + '\n')
+        f.close()
+
+
+
+
+
     def fit_diffusion_to_r1_r2_hetnoe(self, r1_file, r1_error, r2_file, r2_error, hetNoe_file, hetNoe_errors, spectral_density_file,
                                       fields,x, y='h', blocks=False,dna=False, write_out=False, reduced_noe=False,
                                       error_filter=0.05, PhysQ=PhysQ, model="anisotropic", scale_model='default'):
@@ -1423,7 +1782,7 @@ class AnalyseTrr():
                     csa_angs = self.csa_cosine_angles[ (int(atom2_resid), atom2_type, int(atom1_resid), atom1_type)]
                     cosine_angles.append(angs)
                     csa_cosine_angles.append(csa_angs)
-            
+
             except KeyError:
                 pass
 
