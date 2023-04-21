@@ -119,7 +119,7 @@ def r_XzYz(params, spectral_density, fields,
     omega_x = PhysQ.calc_omega(x, fields)
     omega_y = PhysQ.calc_omega(y, fields)  
 
-    dd_prefactor = 3*(PhysQ.calc_dd(x,y,rxy)**2)/4
+    dd_prefactor = (PhysQ.calc_dd(x,y,rxy)**2)/4
 
     term1 = 3*dd_prefactor*(spectral_density(params, [omega_x]+cosine_angles) +\
                     spectral_density(params, [omega_y]+cosine_angles))
@@ -140,6 +140,7 @@ def r_XzYz(params, spectral_density, fields,
 
     term2a = term2*csa_prefactor
     term3 = term1 + term2a
+
     #print(term1[0], term2a[0])
     return term3
 
@@ -309,9 +310,13 @@ def r1_reduced_noe_YX(params, spectral_density, fields,
     omega_x = PhysQ.calc_omega(x, fields)
     omega_y = PhysQ.calc_omega(y, fields)
 
-    term2 = dd_prefactor * gammas * \
+
+
+    term2 = dd_prefactor * \
            (6*spectral_density(params, [omega_x+omega_y]+cosine_angles) \
             - spectral_density(params, [omega_y-omega_x]+cosine_angles))
+
+    # print('SWAG', term2)
 
     return term2
 
@@ -329,10 +334,9 @@ def delta_rate(params, spectral_density, fields,
     Peter Allard, Magnus Helgstrand, and Torleif Hard (1997)
     '''
 
+    #omega_x = PhysQ.calc_omega(x, fields)
     omega_x = PhysQ.calc_omega(x, fields)
-    omega_y = PhysQ.calc_omega(y, fields)
 
-    csa_prefactor = PhysQ.calc_aniso_csa_prefactor(fields, x, csa_atom_name, square=False)
     dd_prefactor = PhysQ.calc_dd(x,y,rxy)/4
 
     #anisotropic CSA 
@@ -340,18 +344,26 @@ def delta_rate(params, spectral_density, fields,
 
         csa_prefactor = PhysQ.calc_aniso_csa_prefactor(fields, x, csa_atom_name, square=False)
         #print(f"csa {csa_prefactor}")
-        csa_j_term = anisotropic_csa_in_anisotropic_diffusion(params, spectral_density, omega_x,
-        csa_atom_name, csa_params ,csa_cosine_angles, 
-        PhysQ=PhysQ)
+        jxx, jyy, jxy = anisotropic_interaction_approximation(params, spectral_density, omega_x,csa_atom_name, csa_params, csa_cosine_angles)
+        sigmaxx, sigmayy, sigmazz = PhysQ.csa_anisotropic[csa_atom_name]
+
+        sig_diffxx = sigmaxx - sigmazz
+        sig_diffyy = sigmayy - sigmazz
+
+        term11 = 2*jxx*sig_diffxx
+        term22 = 2*jyy*sig_diffyy
+        csa_j_term = term11 + term22
 
     # axially symetric CSA
     elif model == 'axially symmetric':
         csa_prefactor = PhysQ.calc_axially_symetric_csa(fields, x, csa_atom_name)
         #print(f"csa {csa_prefactor}")
-        csa_j_term = spectral_density(params, [omega_x]+csa_cosine_angles)
+        csa_j_term = spectral_density(params, [omega_y]+csa_cosine_angles)
     else:
         print('model for delta_rate not selected')
 
     #print(csa_prefactor, dd_prefactor, csa_j_term)
+
+    #print('>>>', csa_prefactor[-1], csa_prefactor[0],dd_prefactor, csa_j_term)
     term2 = csa_prefactor*dd_prefactor*csa_j_term
     return term2
