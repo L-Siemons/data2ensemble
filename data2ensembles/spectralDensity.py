@@ -20,7 +20,8 @@ def J_iso_tauc_S2(params, omega):
     te = (params['tc']*params['tf'])/(params['tc']+params['tf'])
     return (2./5.) * (params['S2']*params['tc'] / ( 1+(omega*params['tc'])**2) + (1-params['S2'])*te / ( 1+(omega*te)**2))
 
-def J_anisotropic_mf(params, args):
+
+def J_anisotropic_emf(params, args):
 
     '''
     This function uses a comepletely isotropic mode for the spectral density function
@@ -30,6 +31,67 @@ def J_anisotropic_mf(params, args):
     accordingly. 
 
     Take from https://link.springer.com/content/pdf/10.1023/A:1018631009583.pdf
+
+    '''
+
+    # unpack varriables
+    dx = params['dx']
+    dy = params['dy']
+    dz = params['dz']
+
+    omega, ex,ey,ez, = args
+
+    isotropy_check = False
+    if np.allclose(dx, dy):
+        if np.allclose(dx, dz):
+            isotropy_check = True
+
+    if isotropy_check == False:
+        taus, amps = mfuncs.calculate_anisotropic_d_amps(dx,dy,dz,ex,ey,ez)
+    else:
+        diso = (dx+dy+dz)/3
+        taus = [1/(6*diso)]
+        amps = [1]
+
+    # here we use the form in the relax manual
+    total = 0.
+    sf = params['Sf']
+    ss = params['Ss']
+    s2 = sf*ss
+    tau_s = params['tau_s']
+    tau_f = params['tau_f']
+
+    for tau, amp in zip(taus, amps):
+
+        term1 = s2/(1+(omega*tau)**2)
+
+        term2_top = (1-sf)*(tau_f+tau)*tau_f
+        term2_bot = (tau_f + tau)**2 + (omega*tau_f*tau)**2
+        term2 = term2_top/term2_bot
+
+        term3_top =  (sf-ss)*(tau_s+tau)*tau_s
+        term3_bot = (tau_s + tau)**2 + (omega*tau_s*tau)**2
+        term3 = term3_top/term3_bot
+
+     
+        total = total +  tau*amp*(term1 + term2 + term3)
+    
+    total = total * 0.4
+    return total
+
+def J_anisotropic_mf_old(params, args):
+
+    '''
+    This function uses a comepletely isotropic mode for the spectral density function
+    with the extended model free formalism. 
+
+    To select an isotropic model and a axial symetric one you can set the parameters 
+    accordingly. 
+
+    Take from https://link.springer.com/content/pdf/10.1023/A:1018631009583.pdf
+
+    this was relabelled from J_anisotropic_mf to J_anisotropic_mf_old()
+    this probably breaks some functionality in estimate DiffusionTesor.py
     '''
 
     def delta2k(da, diso, L2):
