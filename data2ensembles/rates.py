@@ -198,6 +198,10 @@ def r1_YX(params, spectral_density, fields,
     omega_x = PhysQ.calc_omega(x, fields)
     omega_y = PhysQ.calc_omega(y, fields)  
 
+    # if the csa_cosine_angles are none we use the angles for the dipolar interaction
+    if csa_cosine_angles == None:
+        csa_cosine_angles = cosine_angles
+
     term1 = r1_YX_dipollar(params, 
         spectral_density, 
         fields, rxy, x, y=y, 
@@ -217,7 +221,7 @@ def r1_YX(params, spectral_density, fields,
 def r2_YX(params, spectral_density, fields,
     rxy, csa_atom_name, x,
     y='h', cosine_angles=[], csa_cosine_angles=None,csa_params=None,
-    PhysQ=PhysicalQuantities):
+    PhysQ=PhysicalQuantities, model='anisotropic'):
 
     '''
     This function calculates the R2 rate for atom X in a X-Y spin
@@ -233,7 +237,7 @@ def r2_YX(params, spectral_density, fields,
     #print(rxy)
     dd_prefactor = (PhysQ.calc_dd(x,y,rxy)**2)/8
     #print(fields, x, csa_atom_name, PhysQ.calc_iso_csa(fields, x, csa_atom_name))
-    csa_prefactor = PhysQ.calc_aniso_csa_prefactor(fields, x, csa_atom_name)/6
+    
     omega_x = PhysQ.calc_omega(x, fields)
     omega_y = PhysQ.calc_omega(y, fields)
 
@@ -247,20 +251,28 @@ def r2_YX(params, spectral_density, fields,
     if csa_cosine_angles == None:
         csa_cosine_angles = cosine_angles
 
-    #anisotropic csa
-    csa_j_term_0 = anisotropic_csa_in_anisotropic_diffusion(params, spectral_density, 0,
-    csa_atom_name, csa_params,csa_cosine_angles,
-    PhysQ=PhysQ)
+    # I could seperate out the R2 into the dipolar and CSA parts if I wanted to like I 
+    # did for the R1
+    if model == 'anisotropic':
+        #anisotropic csa
+        csa_prefactor = PhysQ.calc_aniso_csa_prefactor(fields, x, csa_atom_name)/6
+        csa_j_term_0 = anisotropic_csa_in_anisotropic_diffusion(params, spectral_density, 0,
+        csa_atom_name, csa_params,csa_cosine_angles,
+        PhysQ=PhysQ)
 
-    csa_j_term_omega_x = anisotropic_csa_in_anisotropic_diffusion(params, spectral_density, omega_x,
-    csa_atom_name, csa_params,csa_cosine_angles,
-    PhysQ=PhysQ)
+        csa_j_term_omega_x = anisotropic_csa_in_anisotropic_diffusion(params, spectral_density, omega_x,
+        csa_atom_name, csa_params,csa_cosine_angles,
+        PhysQ=PhysQ)
 
-    term2 = csa_prefactor*(4*csa_j_term_0 + 3* csa_j_term_omega_x)
- 
+        term2 = csa_prefactor*(4*csa_j_term_0 + 3* csa_j_term_omega_x)
+
+
+    if model == 'axially symmetric':
+        csa_prefactor = (1/6)*PhysQ.calc_axially_symetric_csa(fields, x, csa_atom_name)**2
+        term2a = spectral_density(params, [0.]+csa_cosine_angles)
+        term2b = spectral_density(params, [omega_x]+csa_cosine_angles)
+        term2 = csa_prefactor*(4*term2a + 3*term2b)
     return term1 + term2
-
-
 
 def noe_YX(params, spectral_density, fields,
     rxy, x, r1, y='h', cosine_angles=[], PhysQ=PhysicalQuantities):
