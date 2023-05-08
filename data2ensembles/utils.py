@@ -5,6 +5,7 @@ import scipy.constants
 from scipy.spatial.transform import Rotation as scipyRotation
 import string
 import numpy as np
+import re
 
 class PhysicalQuantities(object):
     """PhysicalQuantities contains properties of NMR atom types and
@@ -286,3 +287,21 @@ def get_atom_info_from_rate_key(key):
 
         return atom1_letters, atom1_numbers, atom1_res_type, atom1_resid, atom1_type, atom2_letters, atom2_numbers, atom2_res_type, atom2_resid, atom2_type
 
+def get_atom_info_from_tag(i):
+    '''
+    get the atom info from the tag
+    '''
+    split1 = i.split('-')[0]
+    split2 = i.split('-')[1]
+
+    atom2 = re.split('(\d+)', split1)
+    atom2 = ''.join(atom2[2:])
+    
+    atom1 = re.split('(\d+)', split2)
+    atom1 = ''.join(atom1[2:])
+    
+    resid = int(re.split('(\d+)', split2)[1])
+    resname = re.split('(\d+)', split2)[0]
+
+    res_info = (resid, resname, atom1, atom2)
+    return res_info
