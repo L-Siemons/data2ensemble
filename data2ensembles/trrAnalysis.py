@@ -308,7 +308,8 @@ class AnalyseTrr():
                         write_out_angles=False, 
                         delete_rmsf_file=True, 
                         reference_gro_file = None,
-                        dt = 1000):
+                        dt = 1000, 
+                        use_reference=False):
 
         # try calculating the principle axis with gromacs
         # then average them and determine all the angles and 
@@ -321,6 +322,7 @@ class AnalyseTrr():
         #     return a
 
 
+
         rmsf_file = self.path_prefix+'_rmsf.xvg'
 
         # calculate average structure
@@ -328,17 +330,16 @@ class AnalyseTrr():
             average_pdb = self.path_prefix+'_average.pdb'
             gmx_command = f'{self.gmx} rmsf -f {self.xtc} -s {self.gro} -dt {dt} -ox {average_pdb} -o {rmsf_file} << EOF\n 0 \nEOF'
             os.system(gmx_command)
-        else:
-            average_pdb = reference_gro_file
 
         if delete_rmsf_file:
             try:
                 os.remove(rmsf_file)
             except FileNotFoundError:
                 pass
-
-
-        self.average_uni = md.Universe(average_pdb)
+        if use_reference == False:
+            self.average_uni = md.Universe(average_pdb)
+        else:
+            self.average_uni = md.Universe(reference_gro_file)
 
         # here the larges axis is axis[2] this should be considered to be 'Dz' from the diffusion tensor
         # or in the case of a sphereoid D||
@@ -398,8 +399,8 @@ class AnalyseTrr():
             if calc_csa_angles == True:
                 csa_calc_angles_check = True
             else:
-                csa_calc_angles_check = True
-
+                csa_calc_angles_check = False
+            
             if csa_atom_chcek and csa_calc_angles_check:
                 
                 # here we calculate all the CSA tensor angles 
@@ -1327,7 +1328,8 @@ class AnalyseTrr():
         # probably can do this with itertools 
         for res1, res2, atom_name1, atom_name2 in atom_info:
 
-            if [atom_name1, atom_name2] not in ignore_atoms:
+            # could abstract this check to a function because I do it a few times 
+            if (atom_name1, atom_name2) not in ignore_atoms:
                 reduced_atom_info.append([res1, res2, atom_name1, atom_name2])
 
 
@@ -1363,7 +1365,7 @@ class AnalyseTrr():
                 csa_atom_name = (atom_name1, self.resid2type[res1])
                 resname = self.resid2type[res1]
 
-            
+            print(res1)
             spectral_density = self.spectral_density_anisotropic
             r1 = d2e.rates.r1_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
                                 cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params)
@@ -1466,17 +1468,17 @@ class AnalyseTrr():
                 atom_check = True
                 x_spin = "C1'"
                 y_spin = "H1'"                
-                operator_size = 8
                 active_protons = ["H1'", "H2'1",  "H2'2"] 
                 passive_protons = active_protons
+                operator_size = 1+1 + len(active_protons)*2
 
             if atom_name1 == "C5":
                 atom_check = True
-                operator_size = 10
                 x_spin = "C5"
                 y_spin = "H5"
                 active_protons = ["H5", "H6",  "H41",  "H42"] 
                 passive_protons = active_protons
+                operator_size = 1+1 + len(active_protons)*2
 
             
             print(atom_name1)
@@ -1486,7 +1488,6 @@ class AnalyseTrr():
                 for i in Shuttling.sampled_fields:
 
                     #print(f'field  {i}')
-
                     traj = Shuttling.trajectory_time_at_fields[i]
                     forwards_field, forwards_time, backwards_field, backwards_time = traj 
                     relaxation_matricies_forwards = relax_mat.relaxation_matrix(spectral_density_params, 
