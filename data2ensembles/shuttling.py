@@ -6,7 +6,7 @@ import sys
 
 class ShuttleTrajectory():
 
-	def __init__(self, fields_file, magnetic_fields_trajectory_file='default'):
+	def __init__(self, fields_file, magnetic_fields_trajectory_file='default', distance_incrementing=0.1):
 
 		if magnetic_fields_trajectory_file == 'default':
 			magnetic_fields_trajectory_file = pkg_resources.resource_filename('data2ensembles', 'dat/field_dist.txt')
@@ -21,7 +21,7 @@ class ShuttleTrajectory():
 
 		# this section assumes that the fields file is written in assending order
 		for i in self.fields_distances_total:
-			field_i = round(i[1],1)
+			field_i = round(i[1]*(1/distance_incrementing))*distance_incrementing
 			if field_i not in added_fields:
 				self.fields_distances.append(i)
 				added_fields.append(field_i)
@@ -46,13 +46,20 @@ class ShuttleTrajectory():
 
 	def construct_single_trajectory(self, field, all_dists, all_fields):
 
+		# print('==start', field)
 		# get the travel time set by the user 
 		travel_time = self.experiment_info[field]['travel_time']
 		half_time = travel_time/2
+
+
 		
 		# the distance that corresponds to the field
 		total_distance = self.fields_distances_dict[field]
 		half_distance = total_distance/2
+
+		# print('travel time', travel_time)
+		# print('total distance', total_distance)
+		# print('half distance', half_distance)
 
 		acceleration = half_distance*2/(half_time**2)
 		decceleration = -1*acceleration
@@ -62,6 +69,9 @@ class ShuttleTrajectory():
 		acc_selector = (all_dists<half_distance)
 		acc_distances = all_dists[acc_selector]
 		acc_time = np.sqrt(2*acc_distances/acceleration)
+
+		# print('acc_distances', acc_distances)
+		# print('acc', acc_time)
 
 		#the distances where we are decellerating
 		deccel_selector = (all_dists >= half_distance) &  (all_dists < total_distance)
@@ -74,6 +84,9 @@ class ShuttleTrajectory():
 
 		decc_times = np.real(np.array([np.roots([a,b,ci])[1] for ci in c])) + half_time 
 		decc_distances = decc_distances+half_distance
+
+		# print('decc_distances', decc_distances)
+		# print('decc_times', decc_times)
 
 		# plots time vs distance 
 		# plt.plot(acc_time, acc_distances)
@@ -107,6 +120,7 @@ class ShuttleTrajectory():
 		# plt.yscale('log')
 		# plt.show()		
 
+
 		return field_centers, time_taken
 
 	def construct_all_trajectories(self, initial_velocity=0.):
@@ -124,7 +138,7 @@ class ShuttleTrajectory():
 		# print(all_dists.shape)
 
 		for field in self.sampled_fields: 
-
+			# print(field)
 			forwards = self.construct_single_trajectory(field, all_dists_master, all_fields_master)
 			forwards_field_center, forwards_time_taken = forwards
 
@@ -132,8 +146,13 @@ class ShuttleTrajectory():
 			all_fields = np.flip(all_fields_master[reverse_selector])
 			all_dists = np.flip(self.fields_distances_dict[field] - all_dists_master[reverse_selector])
 
-			backwards = self.construct_single_trajectory(field, all_dists, all_fields)
-			backwards_field_center, backwards_time_taken = backwards
+			# since the path is symetrical we can just do the reverse of the forwards path
+			backwards_field_center = np.flip(forwards_field_center)
+			backwards_time_taken = np.flip(forwards_time_taken)
+
+			# print('back')
+			# backwards = self.construct_single_trajectory(field, all_dists, all_fields)
+			# backwards_field_center, backwards_time_taken = backwards
 
 			self.trajectory_time_at_fields[field] = [forwards_field_center, forwards_time_taken, 
 													backwards_field_center, backwards_time_taken]
