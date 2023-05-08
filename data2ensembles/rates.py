@@ -369,8 +369,7 @@ def delta_rate(params, spectral_density, fields,
     # axially symetric CSA
     elif model == 'axially symmetric':
         csa_prefactor = PhysQ.calc_axially_symetric_csa(fields, x, csa_atom_name)
-        #print(f"csa {csa_prefactor}")
-        csa_j_term = spectral_density(params, [omega_y]+csa_cosine_angles)
+        csa_j_term = spectral_density(params, [omega_x]+csa_cosine_angles)
     else:
         print('model for delta_rate not selected')
 
