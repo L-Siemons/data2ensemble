@@ -35,10 +35,9 @@ def J_anisotropic_emf(params, args):
     '''
 
     # unpack varriables
-    dx = params['dx']
-    dy = params['dy']
-    dz = params['dz']
-
+    dx = params['dx']#.value
+    dy = params['dy']#.value
+    dz = params['dz']#.value
     omega, ex,ey,ez, = args
 
     isotropy_check = False
@@ -55,11 +54,11 @@ def J_anisotropic_emf(params, args):
 
     # here we use the form in the relax manual
     total = 0.
-    sf = params['Sf']
-    ss = params['Ss']
+    sf = params['Sf']#.value
+    ss = params['Ss']#.value
     s2 = sf*ss
-    tau_s = params['tau_s']
-    tau_f = params['tau_f']
+    tau_s = params['tau_s']#.value
+    tau_f = params['tau_f']#.value
 
     for tau, amp in zip(taus, amps):
 
