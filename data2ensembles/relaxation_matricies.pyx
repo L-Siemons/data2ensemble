@@ -1,6 +1,8 @@
 from data2ensembles.utils import PhysicalQuantities
 import data2ensembles.rates as rates
 import numpy as np
+import cython
+cimport numpy as np
 
 '''
 The code here could be abstracted a little ...
@@ -233,18 +235,18 @@ def relaxation_matrix(params,
 
 
 def relaxation_matrix_emf_c1p(params,
-		resid, 
+		int resid, 
 		spectral_density, 
 		fields, 
 		rxy, 
 		cos_ang,
-		restype,
-		operator_size, 
-		x_spin,
-		y_spin,
+		str restype,
+		int operator_size, 
+		str x_spin,
+		str y_spin,
 		protons, 
-		x = 'c',
-		y = 'h',
+		str x = 'c',
+		str y = 'h',
 		PhysQ=PhysicalQuantities):
 
 	'''
@@ -263,6 +265,28 @@ def relaxation_matrix_emf_c1p(params,
 	C1'zH2'1z
 	C1'zH2'2z
 	'''
+	cdef int proton_len
+	cdef str proton_i
+	cdef str proton_j
+
+	cdef np.ndarray[np.float_t, ndim=1] two_spin_order
+	cdef np.ndarray[np.float_t, ndim=1]  dipolar_contribution
+	cdef np.ndarray[np.float_t, ndim=1]  auto_C1pz
+	cdef np.ndarray[np.float_t, ndim=1]  auto_H1pz
+	cdef np.ndarray[np.float_t, ndim=1]  noe_c1p_h1p
+	cdef np.ndarray[np.float_t, ndim=1]  current_noe
+	cdef np.ndarray[np.float_t, ndim=1]  p_c1h_delta
+
+	cdef str item
+	cdef str jtem
+
+	cdef int tsp_index_add
+	cdef int indx
+	cdef int indx_auto
+	cdef int indx_tsp
+	cdef int jndx
+	cdef int jndx_tsp
+	cdef int jndx_mod
 
 	# make an emty matrix
 	relaxation_matrix = np.zeros([operator_size,operator_size,  len(fields)])
@@ -295,6 +319,7 @@ def relaxation_matrix_emf_c1p(params,
 	# relaxation for Cz 
 	csa_atom_name = (x_spin, restype)
 	cos_key = (resid, x_spin , resid, y_spin)
+
 	auto_C1pz = rates.r1_YX(params, 
 		spectral_density, 
 		fields,
@@ -386,6 +411,7 @@ def relaxation_matrix_emf_c1p(params,
 	# this uses the csa of the C1'
 	csa_atom_name = (x_spin, restype)
 	csa_cos_key = (resid,x_spin , resid, y_spin)
+
 	for indx, item in enumerate(protons):
 
 		indx_tsp = indx + tsp_index_add

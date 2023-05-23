@@ -2,8 +2,11 @@
 from .utils import PhysicalQuantities
 import numpy as np
 import data2ensembles.mathFuncs as mfuncs
+import cython
+cimport numpy as np
 
 PhysQ = PhysicalQuantities()
+
 
 def J_iso_tauc_only(params, omega):
     """
@@ -34,18 +37,61 @@ def J_anisotropic_emf(params, args):
 
     '''
 
+    cdef float ex
+    cdef float ey
+    cdef float ez
+
+    cdef float diso
+    cdef float L2 
+
+    cdef float tau 
+    cdef float amp 
+    cdef list taus 
+    cdef list amps
+
+    cdef float dx 
+    cdef float dy
+    cdef float dz
+
+    cdef float sf 
+    cdef float ss
+    cdef float s2
+
+    cdef float tau_s 
+    cdef float tau_f
+    cdef int isotropy_check 
+
+    cdef np.ndarray[np.float_t, ndim=1] total
+    cdef np.ndarray[np.float_t, ndim=1] omega
+    cdef np.ndarray[np.float_t, ndim=1] term1
+    cdef np.ndarray[np.float_t, ndim=1] term2_bot
+    cdef np.ndarray[np.float_t,  ndim=1] term2
+
+    cdef float term2_top 
+    cdef float term3_top 
+    
+    cdef np.ndarray[np.float_t, ndim=1] term3_bot
+    cdef np.ndarray[np.float_t, ndim=1] term3
+
     # unpack varriables
     dx = params['dx']#.value
     dy = params['dy']#.value
     dz = params['dz']#.value
+
+    sf = params['Sf']#.value
+    ss = params['Ss']#.value
+    s2 = sf*ss
+    tau_s = params['tau_s']#.value
+    tau_f = params['tau_f']#.value
+
     omega, ex,ey,ez, = args
 
-    isotropy_check = False
-    if np.allclose(dx, dy):
-        if np.allclose(dx, dz):
-            isotropy_check = True
+    isotropy_check = 0
+    if dx-dy < 1e-5:
+        if dx-dz < 1e-5:
+            isotropy_check = 1
 
-    if isotropy_check == False:
+    if isotropy_check == 1:
         taus, amps = mfuncs.calculate_anisotropic_d_amps(dx,dy,dz,ex,ey,ez)
     else:
         diso = (dx+dy+dz)/3
@@ -53,12 +99,7 @@ def J_anisotropic_emf(params, args):
         amps = [1]
 
     # here we use the form in the relax manual
-    total = 0.
-    sf = params['Sf']#.value
-    ss = params['Ss']#.value
-    s2 = sf*ss
-    tau_s = params['tau_s']#.value
-    tau_f = params['tau_f']#.value
+    total = np.zeros(len(omega))
 
     for tau, amp in zip(taus, amps):
 
@@ -72,7 +113,6 @@ def J_anisotropic_emf(params, args):
         term3_bot = (tau_s + tau)**2 + (omega*tau_s*tau)**2
         term3 = term3_top/term3_bot
 
-     
         total = total +  tau*amp*(term1 + term2 + term3)
     
     total = total * 0.4

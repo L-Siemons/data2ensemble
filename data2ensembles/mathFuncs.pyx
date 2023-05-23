@@ -2,6 +2,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 from scipy import linalg as scilinalg
 import math
+import cython
+cimport numpy as np
 
 # some trig functions
 def sin_square(a):
@@ -35,10 +37,10 @@ def delta2k(float da, float diso, float L2):
     cdef float bot = np.sqrt(diso**2 - L2) 
     return top/bot
 
-def amp_part2(delta,a,b,c):
+def amp_part2(float delta, float a,float b, float c):
     return delta*(3*(a**4)+6*(b**2)*(c**2)-1)
 
-def calculate_anisotropic_d_amps(dx, dy,dz, ex,ey,ez):
+def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez):
 
     '''
     When looking at anisotropic spectral density functions we 
@@ -47,17 +49,39 @@ def calculate_anisotropic_d_amps(dx, dy,dz, ex,ey,ez):
     '''
 
     #calculate some values 
-    diso = (dx + dy + dz)/3
+    cdef float diso = (dx + dy + dz)/3
     # L2 = (dx*dy + dx*dz + dy*dz)/3
-    L2 = (dx*dy + dx*dz+ dy*dz)/3.
-
+    cdef float L2 = (dx*dy + dx*dz+ dy*dz)/3.
+    cdef int isotropy_check = 0
     # this is to handle the isotropic case where we end up dividing by 0 ... 
-    isotropy_check = False
-    if np.allclose(dx, dy):
-        if np.allclose(dx, dz):
-            isotropy_check = True
+    if dx - dy < 1e-5:
+        if  dx - dz < 1e-5:
+            isotropy_check = 1
 
-    if isotropy_check == False:
+    cdef float delta2x 
+    cdef float delta2y
+    cdef float delta2z
+
+    cdef float tau1
+    cdef float tau2
+    cdef float tau3
+    cdef float tau4
+    cdef float tau5
+    cdef float tau_part1
+
+    cdef float a1
+    cdef float a2
+    cdef float a3
+    cdef float a4
+    cdef float a5
+
+    cdef float part1
+    cdef float part2 
+
+    cdef list amplitudes
+    cdef list taus
+    
+    if isotropy_check == 1:
 
         delta2x = delta2k(dx, diso, L2)
         delta2y = delta2k(dy, diso, L2)
@@ -95,19 +119,32 @@ def calculate_anisotropic_d_amps(dx, dy,dz, ex,ey,ez):
 
     return taus, amplitudes
 
+def matrix_exp(np.ndarray[np.float_t, ndim=2] a):
+    # this should give the same result as scilinalg.expm() 
+    # they might have different ordering due to the ordering of the eigen values
+    cdef np.ndarray[np.float_t, ndim=1] eig
+    cdef np.ndarray[np.float_t, ndim=2] eigvec
+    cdef np.ndarray[np.float_t, ndim=2] final_matrix
+
+    eig, eigvec = np.linalg.eig(a)
+    final_matrix = eigvec @ np.diag(np.exp(-eig)) @ np.linalg.inv(eigvec)
+    return final_matrix
+
 def construct_operator(matricies, times, product=True):
 
     # the order in which these operators are listed I *think* is correct once we reverse them 
     # also check that the axis rolling is not transposing the matrix. Probably should look at this 
     # with an example
-
+    
     # to deal with weather we have alist of matricies or just one.
+    cdef float t
+    cdef np.ndarray[np.float_t, ndim=2] r
 
     if matricies.shape[-1] != 1:
-        operators = [scilinalg.expm(-1*r*t) for r,t in zip(np.rollaxis(matricies, 2), times)]
+        operators = [matrix_exp(-1.*r*t) for r,t in zip(np.rollaxis(matricies, 2), times)]
     elif matricies.shape[-1] == 1: 
         roll = np.rollaxis(matricies, 2)
-        operators = [scilinalg.expm(-1*roll[0]*t) for t in times]
+        operators = [matrix_exp(-1*roll[0]*t) for t in times]
 
     # do we want to return the product of the list
     if product==True:
