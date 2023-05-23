@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt 
 import pkg_resources 
 import sys
+import scipy
 
 class ShuttleTrajectory():
 
@@ -20,13 +21,34 @@ class ShuttleTrajectory():
 		self.experiment_info = {}
 
 		# this section assumes that the fields file is written in assending order
-		for i in self.fields_distances_total:
-			field_i = round(i[1]*(1/distance_incrementing))*distance_incrementing
-			if field_i not in added_fields:
-				self.fields_distances.append(i)
-				added_fields.append(field_i)
+		distance_to_field = scipy.interpolate.interp1d(
+			self.fields_distances_total.T[1], 
+			self.fields_distances_total.T[0])
 
-		self.fields_distances = np.array(self.fields_distances)
+		# interpolate the curve 
+		field_max = max(self.fields_distances_total.T[1])
+		field_min = min(self.fields_distances_total.T[1])
+		fields = np.arange(field_min, field_max, distance_incrementing)
+		distances = distance_to_field(fields)
+
+		self.fields_distances = np.array([distances, fields]).T
+		# plt.scatter(self.fields_distances_total.T[1], 
+		# 	self.fields_distances_total.T[0])
+
+		# plt.plot(fields, distances)
+		# plt.show()
+
+		# for i in self.fields_distances_total:
+
+		# 	field_i = round(i[1]*(1/distance_incrementing))*distance_incrementing
+		# 	if field_i not in added_fields:
+		# 		print(i, field_i)
+		# 		self.fields_distances.append(i)
+		# 		added_fields.append(field_i)
+
+		# self.fields_distances = np.array(self.fields_distances)
+		# print(len(self.fields_distances))
+		# print(self.fields_distances)
 		self.fields_distances_dict = {}
 
 		for i in self.fields_distances_total:
