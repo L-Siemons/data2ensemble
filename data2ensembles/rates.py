@@ -2,7 +2,6 @@ from .utils import *
 import numpy as np
 import copy
 
-
 '''
 Here there are some functions for relaxation rates. The definitions  for
 r1_YX(), r2_YX() and noe_YX() are taken from the model free manual available at
@@ -77,8 +76,15 @@ def anisotropic_csa_in_anisotropic_diffusion(params, spectral_density, omega,
     term3 = 12*sig_diffyy*sig_diffxx*jxy
     return term1 + term2 + term3
 
-def r1_YX_dipollar(params, spectral_density, fields,
-    rxy, x, y='h', cosine_angles = [], omega_x=None, omega_y=None,
+def r1_YX_dipollar(params, 
+    spectral_density, 
+    fields,
+    rxy, 
+    x, 
+    y='h', 
+    cosine_angles = [], 
+    omega_x=None, 
+    omega_y=None,
     PhysQ=PhysicalQuantities):
     '''
     This function calculates only the dipolar contributions to the R1
@@ -171,17 +177,18 @@ def r1_YX_csa(params, spectral_density, fields,
         return term2
 
 
-    # this line below is for the axially symetric CSA 
-    # term2 = csa_prefactor*spectral_density(params, [omega_x]+csa_cosine_angles)
-    #print(term1, term2, term1/term2)
-    #print('R1', term2/(term1 + term2))
-    #print(f'{x} {y} {dd_prefactor} {csa_prefactor} {dd_prefactor/csa_prefactor:.2f} {rxy} {csa_atom_name}')
-    return term2
-
-def r1_YX(params, spectral_density, fields,
-    rxy, csa_atom_name, x, y='h', 
-    cosine_angles = [], csa_cosine_angles=None, csa_params=None,
-    PhysQ=PhysicalQuantities, model='anisotropic'):
+def r1_YX(params, 
+    spectral_density, 
+    fields,
+    rxy, 
+    csa_atom_name, 
+    x, 
+    y ='h', 
+    cosine_angles = [], 
+    csa_cosine_angles=None, 
+    csa_params=None,
+    PhysQ=PhysicalQuantities, 
+    model='anisotropic'):
 
     '''
     This function calculates the R1 rate for atom X in a X-Y spin
@@ -240,8 +247,9 @@ def r2_YX(params, spectral_density, fields,
     
     omega_x = PhysQ.calc_omega(x, fields)
     omega_y = PhysQ.calc_omega(y, fields)
+    omega_zero = np.zeros(len(fields))
 
-    term1 = dd_prefactor*(4*spectral_density(params, [0.]+cosine_angles) + \
+    term1 = dd_prefactor*(4*spectral_density(params, [omega_zero]+cosine_angles) + \
                                 spectral_density(params, [omega_y-omega_x]+cosine_angles) + \
                               3*spectral_density(params, [omega_x]+cosine_angles) + \
                               6*spectral_density(params, [omega_y]+cosine_angles) + \
@@ -269,9 +277,10 @@ def r2_YX(params, spectral_density, fields,
 
     if model == 'axially symmetric':
         csa_prefactor = (1/6)*PhysQ.calc_axially_symetric_csa(fields, x, csa_atom_name)**2
-        term2a = spectral_density(params, [0.]+csa_cosine_angles)
+        term2a = spectral_density(params, [omega_zero]+csa_cosine_angles)
         term2b = spectral_density(params, [omega_x]+csa_cosine_angles)
         term2 = csa_prefactor*(4*term2a + 3*term2b)
+
     return term1 + term2
 
 def noe_YX(params, spectral_density, fields,
@@ -302,8 +311,14 @@ def noe_YX(params, spectral_density, fields,
 
     return term2
 
-def r1_reduced_noe_YX(params, spectral_density, fields,
-    rxy, x, y='h', cosine_angles=[], PhysQ=PhysicalQuantities):
+def r1_reduced_noe_YX(params, 
+    spectral_density, 
+    fields,
+    rxy, 
+    x, 
+    y='h', 
+    cosine_angles=[], 
+    PhysQ=PhysicalQuantities):
 
     '''
     This function calculates the (Noe-1)*R1. This is being used in some fitting routines
@@ -317,6 +332,7 @@ def r1_reduced_noe_YX(params, spectral_density, fields,
     r1 - the r1 rate (eg r1_YX)
 
     '''
+
     dd_prefactor = (PhysQ.calc_dd(x,y,rxy)**2)/4
     gammas = PhysQ.gamma[y]/PhysQ.gamma[x]
     omega_x = PhysQ.calc_omega(x, fields)
