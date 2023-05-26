@@ -387,7 +387,7 @@ def relaxation_matrix_emf_c1p(params,
 			dist_key = (resid, item , jtem)
 			# print(dist_key, rxy[dist_key])
 			cos_key = (resid, item , resid,  jtem)
-
+			#key = (resid, f"{item},{jtem}")
 			if key in params:
 				current_noe = rates.r1_reduced_noe_YX(params, 
 							spectral_density, 
