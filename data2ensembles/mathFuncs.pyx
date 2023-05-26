@@ -139,6 +139,9 @@ def construct_operator(matricies, times, product=True):
     # to deal with weather we have alist of matricies or just one.
     cdef float t
     cdef np.ndarray[np.float_t, ndim=2] r
+    cdef np.ndarray[np.float_t, ndim=2] final_poperator
+    cdef np.ndarray[np.float_t, ndim=3] roll 
+    cdef list operators
 
     if matricies.shape[-1] != 1:
         operators = [matrix_exp(-1.*r*t) for r,t in zip(np.rollaxis(matricies, 2), times)]
@@ -147,7 +150,7 @@ def construct_operator(matricies, times, product=True):
         operators = [matrix_exp(-1*roll[0]*t) for t in times]
 
     # do we want to return the product of the list
-    if product==True:
+    if product == True:
         final_poperator = np.linalg.multi_dot(np.flip(operators))
         return final_poperator
     else:
