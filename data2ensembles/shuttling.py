@@ -28,10 +28,7 @@ class ShuttleTrajectory():
 		# interpolate the curve 
 		field_max = max(self.fields_distances_total.T[1])
 		field_min = min(self.fields_distances_total.T[1])
-		print(field_min	, field_max, distance_incrementing)
 		fields = np.arange(field_min, field_max, distance_incrementing)
-		print(fields)
-		print(fields.shape)
 		distances = distance_to_field(fields)
 
 		self.fields_distances = np.array([distances, fields]).T
