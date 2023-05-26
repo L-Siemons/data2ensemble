@@ -52,11 +52,12 @@ def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez):
     cdef float diso = (dx + dy + dz)/3
     # L2 = (dx*dy + dx*dz + dy*dz)/3
     cdef float L2 = (dx*dy + dx*dz+ dy*dz)/3.
-    cdef int isotropy_check = 0
+    cdef int isotropy_check = 1
+    
     # this is to handle the isotropic case where we end up dividing by 0 ... 
     if dx - dy < 1e-5:
         if  dx - dz < 1e-5:
-            isotropy_check = 1
+            isotropy_check = 0
 
     cdef float delta2x 
     cdef float delta2y
@@ -119,12 +120,14 @@ def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez):
 
     return taus, amplitudes
 
-def matrix_exp(np.ndarray[np.float_t, ndim=2] a):
+# def matrix_exp(np.ndarray[np.float_t, ndim=2] a):
+def matrix_exp(a):
+
     # this should give the same result as scilinalg.expm() 
     # they might have different ordering due to the ordering of the eigen values
-    cdef np.ndarray[np.float_t, ndim=1] eig
-    cdef np.ndarray[np.float_t, ndim=2] eigvec
-    cdef np.ndarray[np.float_t, ndim=2] final_matrix
+    # cdef np.ndarray[np.float_t, ndim=1] eig
+    # cdef np.ndarray[np.float_t, ndim=2] eigvec
+    # cdef np.ndarray[np.float_t, ndim=2] final_matrix
 
     eig, eigvec = np.linalg.eig(a)
     final_matrix = eigvec @ np.diag(np.exp(-eig)) @ np.linalg.inv(eigvec)
@@ -137,11 +140,11 @@ def construct_operator(matricies, times, product=True):
     # with an example
     
     # to deal with weather we have alist of matricies or just one.
-    cdef float t
-    cdef np.ndarray[np.float_t, ndim=2] r
-    cdef np.ndarray[np.float_t, ndim=2] final_poperator
-    cdef np.ndarray[np.float_t, ndim=3] roll 
-    cdef list operators
+    # cdef float t
+    # cdef np.ndarray[np.float_t, ndim=2] r
+    # cdef np.ndarray[np.float_t, ndim=2] final_poperator
+    # cdef np.ndarray[np.float_t, ndim=3] roll 
+    # cdef list operators
 
     if matricies.shape[-1] != 1:
         operators = [matrix_exp(-1.*r*t) for r,t in zip(np.rollaxis(matricies, 2), times)]
