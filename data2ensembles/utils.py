@@ -6,6 +6,7 @@ from scipy.spatial.transform import Rotation as scipyRotation
 import string
 import numpy as np
 import re
+import pickle as pic
 
 class PhysicalQuantities(object):
     """PhysicalQuantities contains properties of NMR atom types and
@@ -305,3 +306,29 @@ def get_atom_info_from_tag(i):
 
     res_info = (resid, resname, atom1, atom2)
     return res_info
+
+def load_pickle(file):
+    with open(file, 'rb') as handle:
+        unserialized_data = pic.load(handle)
+    return unserialized_data
+
+def dict_with_full_keys_to_resid_keys(dictionary, atom_type):
+    '''
+    This takes a dictionary with keys like T9H1'-T9C1'
+    and makes a dictionary with only the resid for A given atom type
+    '''
+
+    new = {}
+    new_resinfo = {}
+
+    for i in dictionary:
+        if atom_type in i:
+            res_info = get_atom_info_from_tag(i)
+            resid, resname, atom1, atom2 = res_info
+            new[resid] = dictionary[i]
+            new_resinfo[resid] = get_atom_info_from_tag(i)
+
+    return new, new_resinfo
+
+def resinto_to_tag(resid, resname, atom1, atom2):
+    return f"{resname}{resid}{atom2}-{resname}{resid}{atom1}"
