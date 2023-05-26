@@ -1,4 +1,3 @@
-
 import data2ensembles.utils as utils
 import data2ensembles.trrAnalysis as trrAnalysis
 import data2ensembles.mathFuncs as mathFunc
@@ -333,7 +332,7 @@ class ModelFree():
             hf_residual = residual_hf(params, r1, r2, hetnoe, r1_err, r2_err, noe_err, res_info)
             # return hf_residual
 
-            for i in range(10):
+            for _ in range(20):
                 lf_residual = residual_lf(params, low_fields, res_info, protons, intensities, intensity_errors)
             sys.exit()
             return np.concatenate([hf_residual, lf_residual])
