@@ -178,7 +178,100 @@ class ModelFree():
             x, model_r1, cosine_angles=angles)
 
         return model_r1, model_r2, model_noe
+    
+    def model_lf_single_field_intensities(self, params, low_field, res_info, protons):
 
+        # I wanted to profile this function 
+        time_dict = {}
+
+        resid, restype, x_spin, y_spin = res_info
+        traj = self.ShuttleTrajectory.trajectory_time_at_fields[low_field]
+        
+        forwards_field, forwards_time, backwards_field, backwards_time = traj 
+        operator_size = 2 + len(protons)*2
+
+        # forwards 
+        relaxation_matricies_forwards = relax_mat.relaxation_matrix_emf_c1p(params,
+                resid, 
+                self.spectral_density, 
+                forwards_field, 
+                self.distances, 
+                self.cosine_angles, 
+                restype,
+                operator_size, 
+                x_spin,
+                y_spin,
+                protons, 
+                x = 'c',
+                y = 'h',)
+
+        # backwards 
+        relaxation_matricies_backwards = relax_mat.relaxation_matrix_emf_c1p(params,
+                resid, 
+                self.spectral_density, 
+                backwards_field, 
+                self.distances, 
+                self.cosine_angles, 
+                restype,
+                operator_size, 
+                x_spin,
+                y_spin,
+                protons, 
+                x = 'c',
+                y = 'h',)
+
+        #stabalisation 
+        relaxation_matricies_stablaization_delay = relax_mat.relaxation_matrix_emf_c1p(params,
+                resid, 
+                self.spectral_density, 
+                np.array([self.ShuttleTrajectory.experiment_info[low_field]['high_field']]), 
+                self.distances, 
+                self.cosine_angles, 
+                restype,
+                operator_size, 
+                x_spin,
+                y_spin,
+                protons, 
+                x = 'c',
+                y = 'h',)
+
+        forwrds_propergators = mathFunc.construct_operator(relaxation_matricies_forwards, forwards_time)
+        
+        backwards_operators = mathFunc.construct_operator(relaxation_matricies_backwards, backwards_time)         
+        stablaization_operator = mathFunc.construct_operator(relaxation_matricies_stablaization_delay,
+            np.array([self.ShuttleTrajectory.experiment_info[low_field]['stabalisation_delay']]), product=False)
+        
+        stablaization_operator = np.array(stablaization_operator)[0]
+
+        #this is the matrix that evolves with the varriable delay
+        low_field_relaxation_matrix = relax_mat.relaxation_matrix_emf_c1p(params,
+                resid, 
+                self.spectral_density, 
+                np.array([low_field]), 
+                self.distances, 
+                self.cosine_angles, 
+                restype,
+                operator_size, 
+                x_spin,
+                y_spin,
+                protons, 
+                x = 'c',
+                y = 'h',)
+
+        delay_propergators = mathFunc.construct_operator(low_field_relaxation_matrix, 
+                                self.ShuttleTrajectory.experiment_info[low_field]['delays'], product=False)
+        
+                    
+        full_propergators = [stablaization_operator.dot(backwards_operators).dot(i).dot(forwrds_propergators) for i in delay_propergators]
+        experimets = np.zeros(operator_size)
+        experimets[1] = 1.
+        print(np.array_str(full_propergators[0].dot(experimets), precision=2, suppress_small=True))
+        #print(len(full_propergators), full_propergators[0].shape)
+
+        intensities = [np.dot(i, experimets) for i in full_propergators]
+        
+        return intensities
+        
     def per_residue_emf_fit(self, 
         lf_data_prefix='', 
         lf_data_suffix='', 
@@ -194,98 +287,6 @@ class ModelFree():
 
         def divide_by_error(a,b,c):
             return (a-b)/c
-
-        def model_lf_single_field_intensities(params, low_field, res_info, protons):
-
-            # I wanted to profile this function 
-            time_dict = {}
-
-            resid, restype, x_spin, y_spin = res_info
-            traj = self.ShuttleTrajectory.trajectory_time_at_fields[low_field]
-            
-            forwards_field, forwards_time, backwards_field, backwards_time = traj 
-            operator_size = 2 + len(protons)*2
-
-            # forwards 
-            relaxation_matricies_forwards = relax_mat.relaxation_matrix_emf_c1p(params,
-                    resid, 
-                    self.spectral_density, 
-                    forwards_field, 
-                    self.distances, 
-                    self.cosine_angles, 
-                    restype,
-                    operator_size, 
-                    x_spin,
-                    y_spin,
-                    protons, 
-                    x = 'c',
-                    y = 'h',)
-
-            # backwards 
-            relaxation_matricies_backwards = relax_mat.relaxation_matrix_emf_c1p(params,
-                    resid, 
-                    self.spectral_density, 
-                    backwards_field, 
-                    self.distances, 
-                    self.cosine_angles, 
-                    restype,
-                    operator_size, 
-                    x_spin,
-                    y_spin,
-                    protons, 
-                    x = 'c',
-                    y = 'h',)
-
-            #stabalisation 
-            relaxation_matricies_stablaization_delay = relax_mat.relaxation_matrix_emf_c1p(params,
-                    resid, 
-                    self.spectral_density, 
-                    np.array([self.ShuttleTrajectory.experiment_info[low_field]['high_field']]), 
-                    self.distances, 
-                    self.cosine_angles, 
-                    restype,
-                    operator_size, 
-                    x_spin,
-                    y_spin,
-                    protons, 
-                    x = 'c',
-                    y = 'h',)
-
-            forwrds_propergators = mathFunc.construct_operator(relaxation_matricies_forwards, forwards_time)
-            
-            backwards_operators = mathFunc.construct_operator(relaxation_matricies_backwards, backwards_time)         
-            stablaization_operator = mathFunc.construct_operator(relaxation_matricies_stablaization_delay,
-                np.array([self.ShuttleTrajectory.experiment_info[low_field]['stabalisation_delay']]), product=False)
-            
-            stablaization_operator = np.array(stablaization_operator)[0]
-
-            #this is the matrix that evolves with the varriable delay
-            low_field_relaxation_matrix = relax_mat.relaxation_matrix_emf_c1p(params,
-                    resid, 
-                    self.spectral_density, 
-                    np.array([low_field]), 
-                    self.distances, 
-                    self.cosine_angles, 
-                    restype,
-                    operator_size, 
-                    x_spin,
-                    y_spin,
-                    protons, 
-                    x = 'c',
-                    y = 'h',)
-
-            delay_propergators = mathFunc.construct_operator(low_field_relaxation_matrix, 
-                                    self.ShuttleTrajectory.experiment_info[low_field]['delays'], product=False)
-            
-                        
-            full_propergators = [stablaization_operator.dot(backwards_operators).dot(i).dot(forwrds_propergators) for i in delay_propergators]
-
-            #print(len(full_propergators), full_propergators[0].shape)
-            experimets = np.zeros(operator_size)
-            experimets[1] = 1.
-            intensities = [np.dot(i, experimets) for i in full_propergators]
-            
-            return intensities
 
         def residual_hf(params, r1, r2, hetnoe, r1_err, r2_err, noe_err, res_info):
             
@@ -308,11 +309,10 @@ class ModelFree():
             
             for field, exp_intensity, exp_error in zip(low_fields, intensities, intensity_errors):
                 
-                intensities = model_lf_single_field_intensities(params, field, resinfo, protons)
-
+                intensities = self.model_lf_single_field_intensities(params, field, resinfo, protons)
                 # the model returns back all the populations 
                 intensities = np.array([i[1] for i in intensities])
-                
+
                 # here we need a prefactor to scale our calculated intensities since we do not 
                 # know what the zero point is. 
 
@@ -332,9 +332,7 @@ class ModelFree():
             hf_residual = residual_hf(params, r1, r2, hetnoe, r1_err, r2_err, noe_err, res_info)
             # return hf_residual
 
-            for _ in range(20):
-                lf_residual = residual_lf(params, low_fields, res_info, protons, intensities, intensity_errors)
-            sys.exit()
+            lf_residual = residual_lf(params, low_fields, res_info, protons, intensities, intensity_errors)
             return np.concatenate([hf_residual, lf_residual])
 
         c1p_keys = self.get_c1p_keys()
@@ -599,7 +597,26 @@ class ModelFree():
         plt.savefig(f"{atom_name}_rates.pdf")
         plt.close()
 
+    def plot_relaxometry_intensities(self,atom_name, protons,model_pic='model_free_parameters.pic'):
 
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
+        low_fields = self.ShuttleTrajectory.experiment_info.keys()
+        print(sorted_keys)
+        for i in sorted_keys:
+            tag = utils.resinto_to_tag(*model_resinfo[i])
+            for f in low_fields:
 
+                delays =  self.ShuttleTrajectory.experiment_info[f]['delays']
+                intensities = self.low_field_intensities[f][tag]
+                intensity_errors = self.low_field_intensity_errors[f][tag]
+                
+                model = self.model_lf_single_field_intensities(models_resid[i].params, f, model_resinfo[i], protons)
+                model =  np.array([i[1] for i in model])
+                #factor = np.mean(intensities/model)
 
+                #plt.errorbar(delays, intensities,yerr=intensity_errors,  label='exp', fmt='o', c="C1")
+                plt.scatter(delays, model)
+                plt.legend()
+                plt.show()
 
+                sys.exit()
