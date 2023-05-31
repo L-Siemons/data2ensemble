@@ -325,9 +325,9 @@ class AnalyseTrr():
 
         rmsf_file = self.path_prefix+'_rmsf.xvg'
 
+        average_pdb = self.path_prefix+'_average.pdb'
         # calculate average structure
         if calc_average_structure == True:
-            average_pdb = self.path_prefix+'_average.pdb'
             gmx_command = f'{self.gmx} rmsf -f {self.xtc} -s {self.gro} -dt {dt} -ox {average_pdb} -o {rmsf_file} << EOF\n 0 \nEOF'
             os.system(gmx_command)
 
@@ -336,6 +336,7 @@ class AnalyseTrr():
                 os.remove(rmsf_file)
             except FileNotFoundError:
                 pass
+        
         if use_reference == False:
             self.average_uni = md.Universe(average_pdb)
         else:
@@ -392,16 +393,11 @@ class AnalyseTrr():
 
 
             if (atom_name1, atom_name2) in csa_ignore_list:
-                csa_atom_chcek = False
+                csa_atom_check = False
             else:
-                csa_atom_chcek = True
-
-            if calc_csa_angles == True:
-                csa_calc_angles_check = True
-            else:
-                csa_calc_angles_check = False
+                csa_atom_check = True
             
-            if csa_atom_chcek and csa_calc_angles_check:
+            if csa_atom_check and calc_csa_angles:
                 
                 # here we calculate all the CSA tensor angles 
                 # but I think we only need the cosine angles for d11 - Need to check
@@ -440,7 +436,7 @@ class AnalyseTrr():
         #atom_info = self.make_atom_pairs_list(atom_names)
         out_name = f'{self.path_prefix}_rotacf/rotacf.xvg'
         print('out name:', out_name)
-        print(f'Atom info length {len(self.gmx_atom_info)}')
+        #print(f'Atom info length {len(self.gmx_atom_info)}')
         command = f'{self.gmx} rotacf -s {self.tpr} -f {xtc} -o {out_name}.xvg -n {indx_file} -P 2 -d -noaver -xvg none'
         #print('>>>>' + command)
         if b != None:
@@ -1365,7 +1361,7 @@ class AnalyseTrr():
                 csa_atom_name = (atom_name1, self.resid2type[res1])
                 resname = self.resid2type[res1]
 
-            print(res1)
+            # print(res1)
             spectral_density = self.spectral_density_anisotropic
             r1 = d2e.rates.r1_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
                                 cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params)
@@ -1666,13 +1662,13 @@ class AnalyseTrr():
                 plt.savefig(f'{i[0]}_{i[1]}_{i[2]}_Field_{field}.pdf')
                 plt.close()
 
-    def write_apparent_relaxometry_rates(self, file_name='apparent_relaxometry_rates.dat'):
+    def write_apparent_relaxometry_rates(self, file_name_prefix='', file_name='apparent_relaxometry_rates.dat'):
 
         '''
         Need to re-write this so the format matches the other rates files, mostly an issue with name tags 
         '''
 
-        file = self.path_prefix + '_calculated_relaxation_rates/' + file_name
+        file = self.path_prefix + '_calculated_relaxation_rates/' + file_name_prefix + file_name
         print(f'Writing apparent R1 rates to: {file}')
         f = open(file, 'w')
         f.write('#header bondName ')
@@ -1735,7 +1731,6 @@ class AnalyseTrr():
                 model = np.array([model_r1,model_r2, model_noe])
                 #print(model.shape, vali.shape,  erri)
                 diffs = (model - vali)/erri
-                
                 total.append(diffs)
 
             total = np.array(total).flatten()
