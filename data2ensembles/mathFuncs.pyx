@@ -3,7 +3,9 @@ from scipy.spatial.transform import Rotation as R
 from scipy import linalg as scilinalg
 import math
 import cython
+import scipy
 cimport numpy as np
+import data2ensembles.numba
 
 # some trig functions
 def sin_square(a):
@@ -121,40 +123,43 @@ def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez):
     return taus, amplitudes
 
 # def matrix_exp(np.ndarray[np.float_t, ndim=2] a):
-def matrix_exp(a):
+def matrix_exp( np.ndarray[np.float64_t, ndim=2] A):
+    '''
+    This function should give the same result as scipy.lingalg.expm
+    '''
 
-    # this should give the same result as scilinalg.expm() 
-    # they might have different ordering due to the ordering of the eigen values
-    # cdef np.ndarray[np.float_t, ndim=1] eig
-    # cdef np.ndarray[np.float_t, ndim=2] eigvec
-    # cdef np.ndarray[np.float_t, ndim=2] final_matrix
+    cdef np.ndarray[np.float64_t, ndim=1] eigenvalues
+    cdef np.ndarray[np.float64_t, ndim=2] eigenvectors
+    cdef np.ndarray[np.float64_t, ndim=2] diagonal_matrix
+    cdef np.ndarray[np.float64_t, ndim=2] matrix_exp
+    cdef np.ndarray[np.float64_t, ndim=2] intermediate
 
-    eig, eigvec = np.linalg.eig(a)
-    final_matrix = eigvec @ np.diag(np.exp(-eig)) @ np.linalg.inv(eigvec)
-    return final_matrix
+    eigenvalues, eigenvectors = np.linalg.eig(A)
+    diagonal_matrix = np.diag(np.exp(eigenvalues))
+    intermediate = np.matmul(eigenvectors, diagonal_matrix)
+    matrix_exp = np.matmul(intermediate, np.linalg.inv(eigenvectors))
 
-def construct_operator(matricies, times, product=True):
+    return matrix_exp
+
+def construct_operator( matricies, times, product=True):
 
     # the order in which these operators are listed I *think* is correct once we reverse them 
     # also check that the axis rolling is not transposing the matrix. Probably should look at this 
     # with an example
-    
     # to deal with weather we have alist of matricies or just one.
-    # cdef float t
-    # cdef np.ndarray[np.float_t, ndim=2] r
-    # cdef np.ndarray[np.float_t, ndim=2] final_poperator
-    # cdef np.ndarray[np.float_t, ndim=3] roll 
-    # cdef list operators
+
 
     if matricies.shape[-1] != 1:
-        operators = [matrix_exp(-1.*r*t) for r,t in zip(np.rollaxis(matricies, 2), times)]
+        operators = [matrix_exp(-1*r*t) for r,t in zip(np.rollaxis(matricies, 2), times)]
+    
     elif matricies.shape[-1] == 1: 
         roll = np.rollaxis(matricies, 2)
         operators = [matrix_exp(-1*roll[0]*t) for t in times]
+        return operators
 
     # do we want to return the product of the list
     if product == True:
-        final_poperator = np.linalg.multi_dot(np.flip(operators))
+        final_poperator = np.linalg.multi_dot(operators)
         return final_poperator
     else:
         return operators
