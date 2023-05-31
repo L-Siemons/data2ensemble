@@ -44,7 +44,7 @@ class ShuttleTrajectory():
 			self.experiment_info[field]['high_field'] = float(i[0])
 			self.experiment_info[field]['travel_time'] = float(i[2])
 			self.experiment_info[field]['stabalisation_delay'] = float(i[3])
-			self.experiment_info[field]['delays'] = [float(a) for a in i[4:]]
+			self.experiment_info[field]['delays'] = np.array([float(a) for a in i[4:]])
 			self.sampled_fields.append(field)
 
 		self.sampled_fields = np.array(self.sampled_fields)
