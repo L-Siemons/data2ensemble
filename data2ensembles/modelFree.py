@@ -11,6 +11,7 @@ import data2ensembles.relaxation_matricies as relax_mat
 from timeit import default_timer as timer
 from datetime import timedelta
 
+import multiprocessing as mp
 import pickle as pic
 import re
 import os
@@ -258,26 +259,136 @@ class ModelFree():
                 x = 'c',
                 y = 'h',)
 
+
         delay_propergators = mathFunc.construct_operator(low_field_relaxation_matrix, 
                                 self.ShuttleTrajectory.experiment_info[low_field]['delays'], product=False)
-        
-                    
+
+        # for i in range(100):
+        #     #mathFunc.construct_operator(low_field_relaxation_matrix, 
+        #     #                    self.ShuttleTrajectory.experiment_info[low_field]['delays'], product=False)
+
+            
+
+        #     roll = np.rollaxis(low_field_relaxation_matrix, 2)
+        #     mathFunc.matrix_exp(roll[0])
+
         full_propergators = [stablaization_operator.dot(backwards_operators).dot(i).dot(forwrds_propergators) for i in delay_propergators]
         experimets = np.zeros(operator_size)
         experimets[1] = 1.
-        print(np.array_str(full_propergators[0].dot(experimets), precision=2, suppress_small=True))
+        #print(np.array_str(full_propergators[0].dot(experimets), precision=2, suppress_small=True))
         #print(len(full_propergators), full_propergators[0].shape)
 
         intensities = [np.dot(i, experimets) for i in full_propergators]
         
         return intensities
+
+    def divide_by_error(self, a,b,c):
+        return (a-b)/c
+
+    def residual_hf(self, params, r1, r2, hetnoe, r1_err, r2_err, noe_err, res_info):
         
+        model_r1, model_r2, model_noe = self.model_hf(params,res_info, self.high_fields)
+        
+        r1_diff = self.divide_by_error(r1, model_r1,r1_err)
+        r2_diff = self.divide_by_error(r2, model_r2,r2_err)
+        noe_diff = self.divide_by_error(hetnoe, model_noe,noe_err)
+        constraint = 0
+
+        if params['tau_s'] < params['tau_f']:
+            constraint = (params['tau_s'] - params['tau_f'])*1e12
+
+        return np.concatenate([r1_diff.flatten(), r2_diff.flatten(), noe_diff.flatten(), [constraint]])
+
+    def residual_lf(self, params, low_field, resinfo, protons, intensities, intensity_errors):
+
+        diffs = []
+        if type(params) is not dict:
+            params = params.valuesdict()
+        
+        for field, exp_intensity, exp_error in zip(low_field, intensities, intensity_errors):
+            
+            intensities = self.model_lf_single_field_intensities(params, field, resinfo, protons)
+            # the model returns back all the populations 
+            intensities = np.array([i[1] for i in intensities])
+
+            # here we need a prefactor to scale our calculated intensities since we do not 
+            # know what the zero point is. 
+
+            factor = np.mean(exp_intensity/intensities)
+            diff = (factor*intensities - exp_intensity)/(exp_error*(exp_intensity))
+            diffs = diffs + diff.tolist()
+
+        return diffs
+
+    def residual_hflf(self, params, hf_data, hf_error, res_info, low_fields, protons,intensities, intensity_errors):
+
+        # high field data
+        r1, r2, hetnoe = hf_data
+        r1_err, r2_err, noe_err = hf_error
+
+        # for i in range(50):
+        hf_residual = self.residual_hf(params, r1, r2, hetnoe, r1_err, r2_err, noe_err, res_info)
+        return hf_residual
+        lf_residual = self.residual_lf(params, low_fields, res_info, protons, intensities, intensity_errors)
+        return np.concatenate([hf_residual, lf_residual])
+
+    def fit_single_residue(self, i):
+
+        print(i)
+        # get the atom info
+        res_info = utils.get_atom_info_from_tag(i)
+        resid, resname, atom1, atom2 = res_info
+
+        # probably dont need a dictionary for the bic any more 
+        bics = {} 
+        bics[i] = 10e1000
+
+        # the rows are Sf, Ss, tauf, taus, might be best to take this out and put it in its own function
+        params_models = generate_mf_parameters(scale_diffusion=False)
+        for params in params_models:
+
+            resid, resname, atom1, atom2 = res_info
+            key = (resid, atom1 , resid, atom2)
+            # args = (np.array([23,16])*self.PhysQ.gamma['c'],self.cosine_angles[key][0], self.cosine_angles[key][1], self.cosine_angles[key][2], )
+            
+            hf_data = (self.r1[i], self.r2[i], self.hetnoe[i])
+            hf_errors = (self.r1_err[i], self.r2_err[i], self.hetnoe_err[i])
+            protons = ("H1'", "H2'", "H2''")
+
+
+            low_fields = list(self.ShuttleTrajectory.experiment_info.keys())
+            intensities = []
+            intensity_errors = []
+
+            for f in low_fields:
+                intensities.append(self.low_field_intensities[f][i])
+                intensity_errors.append(self.low_field_intensity_errors[f][i])
+
+            # do fit, here with the default leastsq algorithm
+            minner = Minimizer(self.residual_hflf, params, fcn_args=(hf_data, 
+                hf_errors, res_info, low_fields, 
+                protons,intensities, intensity_errors))
+
+            start_time = time.time()
+            result = minner.minimize(method='powel')
+            resdict = result.params.valuesdict()
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            #print("Elapsed time: ", elapsed_time) 
+            #report_fit(result)
+
+            if result.bic < bics[i]:
+                model = result
+
+        return (i, model)
+
     def per_residue_emf_fit(self, 
         lf_data_prefix='', 
         lf_data_suffix='', 
         scale_diffusion=False, 
         select_only_some_models=False, 
-        fit_results_pickle_file='model_free_parameters.pic'):
+        fit_results_pickle_file='model_free_parameters.pic', 
+        cpu_count=-1):
 
         '''
         This funtion fits a spectral density function to each residue using the
@@ -285,170 +396,32 @@ class ModelFree():
         the diffusion tensor is held as fixed. 
         '''
 
-        def divide_by_error(a,b,c):
-            return (a-b)/c
-
-        def residual_hf(params, r1, r2, hetnoe, r1_err, r2_err, noe_err, res_info):
-            
-            model_r1, model_r2, model_noe = self.model_hf(params,res_info, self.high_fields)
-            r1_diff = divide_by_error(r1, model_r1,r1_err)
-            r2_diff = divide_by_error(r2, model_r2,r2_err)
-            noe_diff = divide_by_error(hetnoe, model_noe,noe_err)
-
-            constraint = 0
-            if params['tau_s'] < params['tau_f']:
-                constraint = (params['tau_s'] - params['tau_f'])*1e12
-
-            return np.concatenate([r1_diff.flatten(), r2_diff.flatten(), noe_diff.flatten(), [constraint]])
-
-        def residual_lf(params, low_field, resinfo, protons, intensities, intensity_errors):
-
-            diffs = []
-            if type(params) is not dict:
-                params = params.valuesdict()
-            
-            for field, exp_intensity, exp_error in zip(low_fields, intensities, intensity_errors):
-                
-                intensities = self.model_lf_single_field_intensities(params, field, resinfo, protons)
-                # the model returns back all the populations 
-                intensities = np.array([i[1] for i in intensities])
-
-                # here we need a prefactor to scale our calculated intensities since we do not 
-                # know what the zero point is. 
-
-                factor = np.mean(exp_intensity/intensities)
-                diff = (factor*intensities - exp_intensity)/(exp_error*(exp_intensity))
-                diffs = diffs + diff.tolist()
-
-            return diffs
-
-        def residual_hflf(params, hf_data, hf_error, res_info, low_fields, protons,intensities, intensity_errors):
-
-            # high field data
-            r1, r2, hetnoe = hf_data
-            r1_err, r2_err, noe_err = hf_error
-
-            # for i in range(50):
-            hf_residual = residual_hf(params, r1, r2, hetnoe, r1_err, r2_err, noe_err, res_info)
-            # return hf_residual
-
-            lf_residual = residual_lf(params, low_fields, res_info, protons, intensities, intensity_errors)
-            return np.concatenate([hf_residual, lf_residual])
-
         c1p_keys = self.get_c1p_keys()
-
         data = {}
         models = {}
-        models_err = {}
-        bics = {} 
-        for i in tqdm(c1p_keys):
 
-            print(i)
+        if cpu_count <= 0 :
+            cpu_count = mp.cpu_count()
 
-            # get the atom info
-            res_info = utils.get_atom_info_from_tag(i)
-            resid, resname, atom1, atom2 = res_info
-            params = Parameters()
-            bics[i] = 10e10
+        start_time = time.time()
+        if cpu_count == 1:
+            for i in c1p_keys:
+                res = self.fit_single_residue(i)
+                models[res[0]] = res[1] 
+        else:
 
-            # the rows are Sf, Ss, tauf, taus, might be best to take this out and put it in its own function
-            if scale_diffusion == False:
-                models_state = [[True, 1, 0, 0, False],
-                          [True, 1, True, 0, False], 
-                          [1, True, 0, True, False], 
-                          [True, True, 0, True, False],
-                          [True, True, True, True, False]]
+            with mp.Pool(cpu_count) as pool:
+                results = pool.map(self.fit_single_residue, c1p_keys)
 
-            if scale_diffusion == True:
-                models_state = [[True, 1, 0, 0, False],
-                          [True, 1, True, 0, False], 
-                          [1, True, 0, True, False], 
-                          [True, True, 0, True, False],
-                          [True, True, True, True, False],
-                          [True, 1, 0, 0, False],
-                          [True, 1, True, 0, True], 
-                          [1, True, 0, True, True], 
-                          [True, True, 0, True, True],
-                          [True, True, True, True, True]]
+            for i in results:
+                models[i[0]] = i[1]
 
-            for mod in models_state:
-
-                #internal dynamics 
-                if mod[3] == True:
-                    params.add('tau_s', value=0.5e-9, vary=True, max=10e-9)
-                else:
-                    params.add('tau_s', value=mod[3], vary=False)
-
-                if mod[1] == True:
-                    params.add('Ss', value=1, min=0, vary=True, max=1)
-                else:
-                    params.add('Ss', value=mod[1], vary=False,)
-
-                # add a constraint on the diffeerence between tauf and taus
-                if mod[2] == True:
-                    params.add('tau_f', value=50e-12, min=40e-12, vary=True)
-                else: 
-                    params.add('tau_f', value=mod[2], vary=False)
-
-                if mod[3] == True and mod[2] == True:
-                    params.add('diff', max=0, expr='tau_f*5-tau_s')
-                    
-
-                #Sf 
-                if mod[0] == True:
-                    params.add('Sf', value=1, min=0, vary=True, max=1)
-                else:
-                    params.add('Sf', value=mod[0], vary=False,)
-
-                #diffusion
-                params.add('dx_fix',  min=0, value=22689512.7513627, vary=False)
-                params.add('dy_fix',  min=0, value=21652874.50933672, vary=False)
-                params.add('dz_fix',  min=0, value=38050175.186921805, vary=False)
-                params.add('diff_scale', min=0, value=1, vary=mod[4])
-
-                params.add('dx',  expr='dx_fix*diff_scale')
-                params.add('dy',  expr='dy_fix*diff_scale')
-                params.add('dz',  expr='dz_fix*diff_scale')
-
-                #angles = self.cosine_angles[(resid, atom1, resid, atom2)]
-                
-                # do fit, here with the default leastsq algorithm
-                # minner = Minimizer(residual_hf, params, fcn_args=(self.r1[i], self.r2[i], self.hetnoe[i],
-                #  self.r1_err[i], self.r2_err[i], self.hetnoe_err[i], res_info))
-
-                resid, resname, atom1, atom2 = res_info
-                key = (resid, atom1 , resid, atom2)
-                # args = (np.array([23,16])*self.PhysQ.gamma['c'],self.cosine_angles[key][0], self.cosine_angles[key][1], self.cosine_angles[key][2], )
-                
-                hf_data = (self.r1[i], self.r2[i], self.hetnoe[i])
-                hf_errors = (self.r1_err[i], self.r2_err[i], self.hetnoe_err[i])
-                protons = ("H1'", "H2'", "H2''")
-
-                low_fields = list(self.ShuttleTrajectory.experiment_info.keys())
-                intensities = []
-                intensity_errors = []
-
-                for f in low_fields:
-                    intensities.append(self.low_field_intensities[f][i])
-                    intensity_errors.append(self.low_field_intensity_errors[f][i])
-
-                # do fit, here with the default leastsq algorithm
-                minner = Minimizer(residual_hflf, params, fcn_args=(hf_data, 
-                    hf_errors, res_info, low_fields, 
-                    protons,intensities, intensity_errors))
-
-                start_time = time.time()
-                result = minner.minimize(method='powel')
-                resdict = result.params.valuesdict()
-                end_time = time.time()
-                elapsed_time = end_time - start_time
-                print("Elapsed time: ", elapsed_time) 
-                report_fit(result)
-
-                if result.bic < bics[i]:
-                    models[i] = result
-
+        print('models, ',models)
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print("extended model free fitting Elapsed time: ", elapsed_time) 
         # save the file
+        
         with open(fit_results_pickle_file, 'wb') as handle:
             pic.dump(models, handle)
 
@@ -459,11 +432,15 @@ class ModelFree():
         model_array = []
         model_err_array = []
 
+        print('sorted keys:', sorted_keys)
+
         for i in sorted_keys:
             values = [models_resid[i].params[j].value for j in models_resid[i].params]
             stds = [models_resid[i].params[j].stderr for j in models_resid[i].params]
             model_array.append(values)
             model_err_array.append(stds)
+
+            print(values, stds)
 
         model_array = np.array(model_array)
         model_err_array = np.array(model_err_array)
@@ -596,13 +573,18 @@ class ModelFree():
         plt.tight_layout()
         plt.savefig(f"{atom_name}_rates.pdf")
         plt.close()
+    
+    def plot_relaxometry_intensities(self,atom_name, protons,model_pic='model_free_parameters.pic',folder='relaxometry_intensities/'):
 
-    def plot_relaxometry_intensities(self,atom_name, protons,model_pic='model_free_parameters.pic'):
+        try:
+            os.mkdir(folder)
+        except FileExistsError:
+            pass 
 
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
         low_fields = self.ShuttleTrajectory.experiment_info.keys()
-        print(sorted_keys)
-        for i in sorted_keys:
+        print('plotting relaxometry_intensities')
+        for i in tqdm(sorted_keys):
             tag = utils.resinto_to_tag(*model_resinfo[i])
             for f in low_fields:
 
@@ -612,11 +594,80 @@ class ModelFree():
                 
                 model = self.model_lf_single_field_intensities(models_resid[i].params, f, model_resinfo[i], protons)
                 model =  np.array([i[1] for i in model])
-                #factor = np.mean(intensities/model)
+                factor = np.mean(intensities/model)
 
-                #plt.errorbar(delays, intensities,yerr=intensity_errors,  label='exp', fmt='o', c="C1")
-                plt.scatter(delays, model)
+                plt.title(f'{tag} Field: {f:0.2f}T')
+                plt.errorbar(delays, intensities,yerr=intensity_errors,  label='experimantal', fmt='o', c="C1")
+
+                model = [x for _,x in sorted(zip(delays,model*factor))]
+                delays = sorted(delays)
+                plt.plot(delays, model, label='model')
+                plt.ylabel('Intensity')
+                plt.xlabel('delay (s)')
                 plt.legend()
-                plt.show()
+                plt.savefig(f'{folder}field_{f}_{tag}.pdf')
+                plt.close()
 
-                sys.exit()
+def generate_mf_parameters(scale_diffusion=False):
+    if scale_diffusion == False:
+        models_state = [[True, 1, 0, 0, False],
+                  [True, 1, True, 0, False], 
+                  [1, True, 0, True, False], 
+                  [True, True, 0, True, False],
+                  [True, True, True, True, False]]
+
+    if scale_diffusion == True:
+        models_state = [[True, 1, 0, 0, False],
+                  [True, 1, True, 0, False], 
+                  [1, True, 0, True, False], 
+                  [True, True, 0, True, False],
+                  [True, True, True, True, False],
+                  [True, 1, 0, 0, False],
+                  [True, 1, True, 0, True], 
+                  [1, True, 0, True, True], 
+                  [True, True, 0, True, True],
+                  [True, True, True, True, True]]
+    
+    params_lists = []
+    for mod in models_state:
+
+        params = Parameters()
+        #internal dynamics 
+        if mod[3] == True:
+            params.add('tau_s', value=0.5e-9, vary=True, max=10e-9)
+        else:
+            params.add('tau_s', value=mod[3], vary=False)
+
+        if mod[1] == True:
+            params.add('Ss', value=0.8, min=0, vary=True, max=1)
+        else:
+            params.add('Ss', value=mod[1], vary=False,)
+
+        # add a constraint on the diffeerence between tauf and taus
+        if mod[2] == True:
+            params.add('tau_f', value=50e-12, min=40e-12, vary=True)
+        else: 
+            params.add('tau_f', value=mod[2], vary=False)
+
+        if mod[3] == True and mod[2] == True:
+            params.add('diff', max=0, expr='tau_f*5-tau_s')
+            
+
+        #Sf 
+        if mod[0] == True:
+            params.add('Sf', value=0.9, min=0, vary=True, max=1)
+        else:
+            params.add('Sf', value=mod[0], vary=False,)
+
+        #diffusion
+        params.add('dx_fix',  min=0, value=22689512.7513627, vary=False)
+        params.add('dy_fix',  min=0, value=21652874.50933672, vary=False)
+        params.add('dz_fix',  min=0, value=38050175.186921805, vary=False)
+        params.add('diff_scale', min=0, value=1, vary=mod[4])
+
+        params.add('dx',  expr='dx_fix*diff_scale')
+        params.add('dy',  expr='dy_fix*diff_scale')
+        params.add('dz',  expr='dz_fix*diff_scale')
+        params_lists.append(params)
+
+    return params_lists
