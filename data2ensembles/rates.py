@@ -155,11 +155,7 @@ def r1_YX_csa(params, spectral_density, fields,
     csa_atom_name, x, y, csa_cosine_angles, csa_params,
     PhysQ, omega_x=None, model='anisotropic'):
 
-    if omega_x.all() == None:
-        omega_x = PhysQ.calc_omega(x, fields)
-
-
-    
+    omega_x = PhysQ.calc_omega(x, fields)
     if model == 'anisotropic':
 
         csa_prefactor = PhysQ.calc_aniso_csa_prefactor(fields, x, csa_atom_name)
