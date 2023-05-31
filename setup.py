@@ -18,7 +18,8 @@ setup(
     ext_modules=cythonize([
         "data2ensembles/mathFuncs.pyx", 
         "data2ensembles/spectralDensity.pyx",
-        "data2ensembles/relaxation_matricies.pyx",]),
+        "data2ensembles/relaxation_matricies.pyx",
+       ]),
     #license='LICENSE.txt',
     package_data={'data2ensembles': ['dat/*dat', 'dat/*txt'],  },
     include_package_data=True,
