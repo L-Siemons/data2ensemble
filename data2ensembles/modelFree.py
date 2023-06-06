@@ -416,7 +416,6 @@ class ModelFree():
             for i in results:
                 models[i[0]] = i[1]
 
-        print('models, ',models)
         end_time = time.time()
         elapsed_time = end_time - start_time
         print("extended model free fitting Elapsed time: ", elapsed_time) 
@@ -425,7 +424,7 @@ class ModelFree():
         with open(fit_results_pickle_file, 'wb') as handle:
             pic.dump(models, handle)
 
-    def plot_model_free_parameters(self, atom_name, model_pic='model_free_parameters.pic', plot_name='model_free_params.pdf'):
+    def plot_model_free_parameters(self, atom_name, model_pic='model_free_parameters.pic', plot_name='model_free_params.pdf', showplot=False):
 
         # load the model
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
@@ -439,8 +438,6 @@ class ModelFree():
             stds = [models_resid[i].params[j].stderr for j in models_resid[i].params]
             model_array.append(values)
             model_err_array.append(stds)
-
-            print(values, stds)
 
         model_array = np.array(model_array)
         model_err_array = np.array(model_err_array)
@@ -459,7 +456,7 @@ class ModelFree():
 
             ax[i].set_ylabel(param_names[i])
             ax[i].set_xlabel('residue')
-            ax[i].errorbar(sorted_keys, model_array.T[i], yerr=model_err_array.T[i], fmt='o')
+            ax[i].errorbar(sorted_keys, model_array.T[i], yerr=model_err_array.T[i],fmt='o' )
             
             if 'tau' in param_names[i]:
                 ax[i].set_yscale('log')
@@ -468,6 +465,8 @@ class ModelFree():
                 ax[i].set_ylim(0,1.1)
         plt.tight_layout()
         plt.savefig(plot_name)
+        if showplot == True:
+            plt.show()
         plt.close()
 
     def plot_r1_r2_noe(self,atom_name, 
@@ -608,7 +607,7 @@ class ModelFree():
                 plt.savefig(f'{folder}field_{f}_{tag}.pdf')
                 plt.close()
 
-def generate_mf_parameters(scale_diffusion=False):
+def generate_mf_parameters(scale_diffusion=False, diffusion=None):
     if scale_diffusion == False:
         models_state = [[True, 1, 0, 0, False],
                   [True, 1, True, 0, False], 
@@ -634,9 +633,9 @@ def generate_mf_parameters(scale_diffusion=False):
         params = Parameters()
         #internal dynamics 
         if mod[3] == True:
-            params.add('tau_s', value=0.5e-9, vary=True, max=10e-9)
+            params.add('tau_s', value=0.5e-9, vary=True, max=10e-9, min=0)
         else:
-            params.add('tau_s', value=mod[3], vary=False)
+            params.add('tau_s', value=mod[3], vary=False, min=0)
 
         if mod[1] == True:
             params.add('Ss', value=0.8, min=0, vary=True, max=1)
@@ -645,13 +644,9 @@ def generate_mf_parameters(scale_diffusion=False):
 
         # add a constraint on the diffeerence between tauf and taus
         if mod[2] == True:
-            params.add('tau_f', value=50e-12, min=40e-12, vary=True)
+            params.add('tau_f', value=100e-12, min=40e-12, vary=True,max=1e-9)
         else: 
-            params.add('tau_f', value=mod[2], vary=False)
-
-        if mod[3] == True and mod[2] == True:
-            params.add('diff', max=0, expr='tau_f*5-tau_s')
-            
+            params.add('tau_f', value=mod[2], vary=False)    
 
         #Sf 
         if mod[0] == True:
@@ -659,11 +654,21 @@ def generate_mf_parameters(scale_diffusion=False):
         else:
             params.add('Sf', value=mod[0], vary=False,)
 
+        params.add('diff', min=0, expr='tau_s-tau_f*5')
+
         #diffusion
-        params.add('dx_fix',  min=0, value=22689512.7513627, vary=False)
-        params.add('dy_fix',  min=0, value=21652874.50933672, vary=False)
-        params.add('dz_fix',  min=0, value=38050175.186921805, vary=False)
-        params.add('diff_scale', min=0, value=1, vary=mod[4])
+
+        if diffusion == None:
+            params.add('dx_fix',  min=0, value=22689512.7513627, vary=False)
+            params.add('dy_fix',  min=0, value=21652874.50933672, vary=False)
+            params.add('dz_fix',  min=0, value=38050175.186921805, vary=False)
+            params.add('diff_scale', min=0, value=1, vary=mod[4])
+
+        else:
+            params.add('dx_fix',  min=0, value=diffusion[0], vary=False)
+            params.add('dy_fix',  min=0, value=diffusion[1], vary=False)
+            params.add('dz_fix',  min=0, value=diffusion[2], vary=False)
+            params.add('diff_scale', min=0, value=1, vary=mod[4])
 
         params.add('dx',  expr='dx_fix*diff_scale')
         params.add('dy',  expr='dy_fix*diff_scale')
