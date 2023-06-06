@@ -90,7 +90,7 @@ def J_anisotropic_emf(params, args):
         if dx-dz < 1e-5:
             isotropy_check = 1
 
-    if isotropy_check == 1:
+    if isotropy_check == 0:
         taus, amps = mfuncs.calculate_anisotropic_d_amps(dx,dy,dz,ex,ey,ez)
     else:
         diso = (dx+dy+dz)/3
@@ -281,78 +281,133 @@ def J_axial_symetric(params, omega):
     return (2./5.)*total
 
 
-def J_exponencial_sum(params, omega):
-    """J_exponencial_sum calculates the spectral density using a
-    functional form that is a sum of decays similar to that in
+def spectral_density_anisotropic_exponencial_sum(params, args):
+    '''
+    The aim of this function is to take internal correlation funstion from MD 
+    (see self.spectral_density_fuction and spectral_density_fuction) and to apply and anisotropic diffusion 
+    so that one could then calculate NMR relaxation rates.
 
-    Fitting Side-Chain NMR Relaxation Data Using Molecular Simulations
-    Felix Kümmerer, Simone Orioli, David Harding-Larsen, Falk Hoffmann,
-    Yulian Gavrilov, Kaare Teilum, and Kresten Lindorff-Larsen*
-    https://doi.org/10.1021/acs.jctc.0c01338
+    maybe I should move this to the spectral density module. 
 
+    here we use a set of exponencial decays doing from time_1 to time_<N> with the amplitudes amp_1 to amp_<N>
 
-    and it also uses a ellipsoid diffusion tensor as described in
-    Ab Initio Prediction of NMR Spin Relaxation Parameters from Molecular Dynamics Simulations
-    Po-chia Chen*†Orcid, Maggy Hologne‡, Olivier Walker‡, and Janosch Hennig†
-    https://pubs.acs.org/doi/pdf/10.1021/acs.jctc.7b00750
+    '''
 
-    To use this class params needs to be a dictionary with the following entries:
-    'S_long' - long time limit order parameter
-    'amp_<n>' - amplitudes for each exponential decay
-    'time_<n>' - time in ps for each exponential decay
-    'd_par' - parallel component of the diffusion tensor
-    'd_per' - perpendicular component of the diffusion tensor
-    'theta' - this should be the average angle between the XY vector and d_par, in radians
+    # unpack varriables
+    dx = params['dx']
+    dy = params['dy']
+    dz = params['dz']
 
-    the d and a definitions are taken from this paper
-    https://link.springer.com/content/pdf/10.1023/A:1018631009583.pdf
-    and https://link.springer.com/article/10.1023/A:1011283809984?noAccess=true
-    """
+    omega, ex,ey,ez, = args 
+    taus, amps = mfuncs.calculate_anisotropic_d_amps(dx,dy,dz,ex,ey,ez)
+    curve_count = sum([1 if "amp" in i else 0 for i in params.keys()])
 
-    # get how many amps we have
-    curve_count = 0
-    for i in params.keys():
-        if 'amp' in i:
-            curve_count = curve_count+1
-
-    # spectral density stuff
-    d1 = 6*params['d_per']
-    d2 = 5*params['d_per'] + params['d_par']
-    d3 = 2*params['d_per'] + 4*params['d_par']
-    d_list = [d1,d2,d3]
-
-    a1 = (((3*np.cos(params['theta'])**2)-1)**2)/4
-    a2 = 3*(np.sin(params['theta'])**2) * (np.cos(params['theta'])**2)
-    a3 = 0.75*(np.sin(params['theta'])**4)
-    a_list = [a1,a2,a3]
-
-    if type(omega) == np.ndarray:
+    try:
         total = np.zeros(len(omega))
-    else:
-        total = 0.
+    except TypeError:
+        # this arises in the case where omega has a lenth of 1. 
+        total = 0
 
-    for ak, dk in zip(a_list,d_list):
+    for taui, ampi in zip(taus, amps):
 
-        #tumbling part!
-        tumb = params['S_long']*dk/(dk**2 + omega**2)
+        taui = taui
+        #diffusion part
+        term1_top = ampi * taui * params['S_long']
+        term1_bottom = 1+(omega*taui)**2
+        term1_total = term1_top/term1_bottom
+        total = total + term1_total
 
-        if type(omega) == np.ndarray:
-            internal_sum = np.zeros(len(omega))
-        else:
-            internal_sum = 0.
+        # this check means we dont do the sum for internal motions when it is not there 
+        # it also means we can just switch off the internal motions by setting S_long = 1
+        # and not worry about the params['amp_%i'%(i)] terms.
+        if params['S_long'] != 1:
+            #now we do the internal motions 
+            for i in range(curve_count):
+                i = i + 1
 
-        # these are the internal motions
-        for i in range(curve_count):
-            i = i + 1
-            ampi = 'amp_%i'%(i)
-            timei = 'time_%i'%(i)
-            internal_top = params[ampi]*(dk+params[timei])
+                #correction for fitting the correlation times in ps
+                tau_internal = params['time_%i'%(i)]
+                amp_internal = params['amp_%i'%(i)]
 
-            internal_bot = (dk+params[timei])**2 + omega**2
-            internal = internal_top/internal_bot
-            internal_sum = internal_sum + internal
+                tau_eff = taui*tau_internal/(tau_internal+taui)
+                term_internal = amp_internal*ampi*tau_eff/(1+(omega*tau_eff)**2)
+                
+                total = total + term_internal
 
-        total = total + ak*(tumb + internal_sum)
+    return (2./5.)*total
 
-    return total
+# def J_exponencial_sum(params, omega):
+#     """J_exponencial_sum calculates the spectral density using a
+#     functional form that is a sum of decays similar to that in
+
+#     Fitting Side-Chain NMR Relaxation Data Using Molecular Simulations
+#     Felix Kümmerer, Simone Orioli, David Harding-Larsen, Falk Hoffmann,
+#     Yulian Gavrilov, Kaare Teilum, and Kresten Lindorff-Larsen*
+#     https://doi.org/10.1021/acs.jctc.0c01338
+
+
+#     and it also uses a ellipsoid diffusion tensor as described in
+#     Ab Initio Prediction of NMR Spin Relaxation Parameters from Molecular Dynamics Simulations
+#     Po-chia Chen*†Orcid, Maggy Hologne‡, Olivier Walker‡, and Janosch Hennig†
+#     https://pubs.acs.org/doi/pdf/10.1021/acs.jctc.7b00750
+
+#     To use this class params needs to be a dictionary with the following entries:
+#     'S_long' - long time limit order parameter
+#     'amp_<n>' - amplitudes for each exponential decay
+#     'time_<n>' - time in ps for each exponential decay
+#     'd_par' - parallel component of the diffusion tensor
+#     'd_per' - perpendicular component of the diffusion tensor
+#     'theta' - this should be the average angle between the XY vector and d_par, in radians
+
+#     the d and a definitions are taken from this paper
+#     https://link.springer.com/content/pdf/10.1023/A:1018631009583.pdf
+#     and https://link.springer.com/article/10.1023/A:1011283809984?noAccess=true
+#     """
+
+#     # get how many amps we have
+#     curve_count = 0
+#     for i in params.keys():
+#         if 'amp' in i:
+#             curve_count = curve_count+1
+
+#     # spectral density stuff
+#     d1 = 6*params['d_per']
+#     d2 = 5*params['d_per'] + params['d_par']
+#     d3 = 2*params['d_per'] + 4*params['d_par']
+#     d_list = [d1,d2,d3]
+
+#     a1 = (((3*np.cos(params['theta'])**2)-1)**2)/4
+#     a2 = 3*(np.sin(params['theta'])**2) * (np.cos(params['theta'])**2)
+#     a3 = 0.75*(np.sin(params['theta'])**4)
+#     a_list = [a1,a2,a3]
+
+#     if type(omega) == np.ndarray:
+#         total = np.zeros(len(omega))
+#     else:
+#         total = 0.
+
+#     for ak, dk in zip(a_list,d_list):
+
+#         #tumbling part!
+#         tumb = params['S_long']*dk/(dk**2 + omega**2)
+
+#         if type(omega) == np.ndarray:
+#             internal_sum = np.zeros(len(omega))
+#         else:
+#             internal_sum = 0.
+
+#         # these are the internal motions
+#         for i in range(curve_count):
+#             i = i + 1
+#             ampi = 'amp_%i'%(i)
+#             timei = 'time_%i'%(i)
+#             internal_top = params[ampi]*(dk+params[timei])
+
+#             internal_bot = (dk+params[timei])**2 + omega**2
+#             internal = internal_top/internal_bot
+#             internal_sum = internal_sum + internal
+
+#         total = total + ak*(tumb + internal_sum)
+
+#     return total
 
