@@ -5,7 +5,6 @@ import math
 import cython
 import scipy
 cimport numpy as np
-import data2ensembles.numba
 
 # some trig functions
 def sin_square(a):
@@ -60,6 +59,7 @@ def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez):
     if dx - dy < 1e-5:
         if  dx - dz < 1e-5:
             isotropy_check = 0
+
 
     cdef float delta2x 
     cdef float delta2y
@@ -120,6 +120,7 @@ def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez):
         taus = [1/(6*diso)]
         amplitudes = [1]
 
+    #print(taus, amplitudes)
     return taus, amplitudes
 
 # def matrix_exp(np.ndarray[np.float_t, ndim=2] a):
