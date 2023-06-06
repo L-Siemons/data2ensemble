@@ -4,8 +4,11 @@ import data2ensembles.mathFuncs as mathFunc
 import data2ensembles.rates
 import data2ensembles as d2e
 import data2ensembles.structureUtils as strucUtils
+import data2ensembles.modelFree as mf
 import data2ensembles.shuttling as shuttling
 import data2ensembles.relaxation_matricies as relax_mat
+import data2ensembles.spectralDensity as specDens
+import data2ensembles.correlationFunctions as correlation_functions
 #import data2ensembles.csa_spec_dens as csa_spec_dens
 
 
@@ -18,6 +21,7 @@ from tqdm import tqdm
 import MDAnalysis as md
 from MDAnalysis import transformations
 
+import pickle as pic 
 from lmfit import Minimizer, Parameters, report_fit
 from tqdm import tqdm
 import enlighten
@@ -336,7 +340,7 @@ class AnalyseTrr():
                 os.remove(rmsf_file)
             except FileNotFoundError:
                 pass
-        
+
         if use_reference == False:
             self.average_uni = md.Universe(average_pdb)
         else:
@@ -826,54 +830,10 @@ class AnalyseTrr():
 
     def spectral_density_anisotropic(self, params, args):
         '''
-        The aim of this function is to take internal correlation funstion from MD 
-        (see self.spectral_density_fuction and spectral_density_fuction) and to apply and anisotropic diffusion 
-        so that one could then calculate NMR relaxation rates.
-
-        maybe I should move this to the spectral density module. 
+        this function is a bit of bloat at the moment. I could remove all the listings from here but I can do this 
+        another time. 
         '''
-
-        # unpack varriables
-        dx = params['dx']
-        dy = params['dy']
-        dz = params['dz']
-
-        omega, ex,ey,ez, = args 
-        taus, amps = mathFunc.calculate_anisotropic_d_amps(dx,dy,dz,ex,ey,ez)
-
-        try:
-            total = np.zeros(len(omega))
-        except TypeError:
-            # this arises in the case where omega has a lenth of 1. 
-            total = 0
-
-        for taui, ampi in zip(taus, amps):
-
-            taui = taui
-            #diffusion part
-            term1_top = ampi * taui * params['S_long']
-            term1_bottom = 1+(omega*taui)**2
-            term1_total = term1_top/term1_bottom
-            total = total + term1_total
-
-            # this check means we dont do the sum for internal motions when it is not there 
-            # it also means we can just switch off the internal motions by setting S_long = 1
-            # and not worry about the params['amp_%i'%(i)] terms.
-            if params['S_long'] != 1:
-                #now we do the internal motions 
-                for i in range(self.curve_count):
-                    i = i + 1
-
-                    #correction for fitting the correlation times in ps
-                    tau_internal = params['time_%i'%(i)]
-                    amp_internal = params['amp_%i'%(i)]
-
-                    tau_eff = taui*tau_internal/(tau_internal+taui)
-                    term_internal = amp_internal*ampi*tau_eff/(1+(omega*tau_eff)**2)
-                    
-                    total = total + term_internal
-
-        return (2./5.)*total
+        return specDens.spectral_density_anisotropic_exponencial_sum(params, args)
 
     def plot_correlation_function(self, params, x, y, block, res1, atom_name1, theta=0):
         '''
@@ -1878,6 +1838,143 @@ class AnalyseTrr():
         print(f'isotropic tau c: {iso_tc * 1e9:0.2} ns' )
         self.write_diffusion_trace(res_params, "diffusion_tensor_fitted.dat")
 
+    # def fit_emf_to_spectral_density(self, atom_names, spectral_density_file, diffusion_file, omega_range=[1e-5, 4e9], omega_number_of_steps=1e3):
+
+    #     '''
+    #     This function tries to fit extended model free to the MD spectral density function model but for some 
+    #     reason it doesnt produce very stable results. 
+    #     '''
+    #     atom_info = self.make_atom_pairs_list(atom_names)
+    #     spectral_density_params_dict = utils.read_fitted_spectral_density(spectral_density_file)
+    #     dval, diffusion_errors = utils.read_diffusion_tensor(diffusion_file)
+    #     omega = np.geomspace(omega_range[0], omega_range[1], int(omega_number_of_steps))
+
+    #     def model(params, args):
+    #         model_corr = specDens.J_anisotropic_emf(params, args)
+    #         return model_corr
+
+    #     def resid(params, resid, args, target):
+    #         model_corr = model(params, args)
+    #         return model_corr - target
+
+    #     emf_models = {}
+    #     for res1, res2, atom_name1, atom_name2 in tqdm(atom_info):
+
+    #         params = copy.copy(spectral_density_params_dict[spec_dens_key])
+    #         params['dx']=dval[0]
+    #         params['dy']=dval[1]
+    #         params['dz']=dval[2]
+
+    #         angles_key = (res1, atom_name1, res2, atom_name2)
+    #         ex,ey,ez = self.cosine_angles[angles_key]
+
+    #         args = (time, ex,ey,ez )
+    #         model_params = mf.generate_mf_parameters(scale_diffusion=False, diffusion=dval)
+    #         bic = None 
+    #         mod = model_params[-1]
+
+    #         minner = Minimizer(resid, mod, fcn_args=(mod, args, current_spectral_density))
+    #         result = minner.minimize(method="powel")
+
+    #         if bic == None:
+    #             bic = result.bic
+    #             emf_models[angles_key] = result
+
+    #         elif result.bic < bic:
+    #             bic = result.bic
+    #             emf_models[angles_key] = result
+
+    #         result = minner.minimize(method='powel')
+    #         resdict = result.params.valuesdict()
+
+    #         # if "C1'" in (atom_name1, atom_name2) and "H1'" in (atom_name1, atom_name2):
+    #         #     cur_mod = model(emf_models[angles_key].params, args)
+    #         #     plt.plot(omega, current_spectral_density, label='tagr')
+    #         #     plt.plot(omega, cur_mod, label='mod')
+    #         #     plt.legend()
+    #         #     plt.show()
+    #     try:
+    #         os.mkdir(f'{self.path_prefix}_emf_fit/')
+    #     except FileExistsError:
+    #         pass
+
+    #     fit_results_pickle_file = f'{self.path_prefix}_emf_fit/emf_params.pic'
+    #     with open(fit_results_pickle_file, 'wb') as handle:
+    #         pic.dump(emf_models, handle)
+
+    def fit_emf_correlation_to_md(self, atom_names, diffusion_file, time_max=20e-9, ignore_list=(), sv=True):
+
+        atom_info = self.make_atom_pairs_list(atom_names)
+        dval, diffusion_errors = utils.read_diffusion_tensor(diffusion_file)
+        emf_models = {}
+
+        def model(params, args):
+            c0, internal, total = correlation_functions.correlation_anisotropic_emf(params, args, sv=sv)
+            return c0, internal, total
+
+        def resid(params, args, target):
+            _,_, model_spec = model(params, args)
+            return model_spec - target
+
+
+        for res1, res2, atom_name1, atom_name2 in tqdm(atom_info):
+
+            if [atom_name1, atom_name2] not in ignore_list:
+                name = f"{self.path_prefix}_rotacf/rotacf_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
+                pdf_name =f'{self.path_prefix}_rotacf/correlation_func_{res1}_{atom_name1}_{res2}_{atom_name2}.pdf'
+                temp = self.read_gmx_xvg(name) 
+
+                x = temp.T[0]
+                y = temp.T[1]
+
+                y = y[x<time_max]
+                x = x[x<time_max]
+
+                if sv == True:
+                    y = y[x>0.]
+                    x = x[x>0.]
+
+                angles_key = (res1, atom_name1, res2, atom_name2)
+                ex,ey,ez = self.cosine_angles[angles_key]
+                args = (x,ex,ey,ez)
+
+                model_params = mf.generate_mf_parameters(scale_diffusion=False, diffusion=dval)
+                c0, _, _ = correlation_functions.correlation_anisotropic_emf(model_params[0], args)
+                md_with_diff = y * c0
+                mod = model_params[-1]
+                
+                if sv == True:
+                    mod.add('Sv', min=0, max=1, value=0.9)
+
+                minner = Minimizer(resid, mod, fcn_args=(args, md_with_diff))
+                result = minner.minimize(method="powel")
+                emf_models[angles_key] = result
+                report_fit(result)
+
+                current_model_0, mod_internal, mod_total = model(emf_models[angles_key].params, args)
+                plt.plot(x,c0, label='c0')
+                plt.plot(x,md_with_diff, label='total')
+                plt.plot(x,y,label='internal')
+                
+                plt.plot(x,current_model_0,':', label='model co')
+                plt.plot(x,mod_internal,':', label='model internal')
+                plt.plot(x,mod_total,':', label='model total')
+                plt.legend()
+                plt.savefig(pdf_name)
+                plt.close()
+                # os.exit
+
+        try:
+            os.mkdir(f'{self.path_prefix}_emf_fit/')
+        except FileExistsError:
+            pass
+
+        fit_results_pickle_file = f'{self.path_prefix}_emf_fit/emf_params_from_correlations.pic'
+        with open(fit_results_pickle_file, 'wb') as handle:
+            pic.dump(emf_models, handle)
+
+
+
     def plot_spectral_densities(self,r1_file, spectral_density_file, diffusion_file,):
         '''
         This function calculates the spectral density for a single trajecotry. 
@@ -1893,8 +1990,8 @@ class AnalyseTrr():
         r1, _ = d2e.utils.read_nmr_relaxation_rate(r1_file)
         dval, diffusion_errors = utils.read_diffusion_tensor(diffusion_file)
         spectral_density_params_dict = utils.read_fitted_spectral_density(spectral_density_file)
+        
         for i in r1:
-
             try:
                 # this try statement if you want to look at fewer atoms 
                 # need a better fix in future
