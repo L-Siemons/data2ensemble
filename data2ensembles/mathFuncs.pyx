@@ -6,47 +6,178 @@ import cython
 import scipy
 cimport numpy as np
 
+'''
+This module contains some general mathmatical functions that
+are used by many NMR calculations. In order to speed up these calculations 
+one can provide Cython types for when the C extension is  built
+'''
+
 # some trig functions
 def sin_square(a):
+    '''
+    Calculates sin^2(x)
+    
+    Parameters
+    ----------
+        a : float, ndarray 
+
+    Returns
+    -------
+        c : float, ndarray
+
+    '''
     b = np.sin(a)
-    return b**2
+    c = b**2
+    return c
 
 def cos_square(a):
+    '''
+    Calculates cos^2(x)
+    
+    Parameters
+    ----------
+        a : float, ndarray 
+
+    Returns
+    -------
+        c : float, ndarray
+
+    '''
     b = np.cos(a)
-    return b**2
+    c = b**2
+    return c
 
 def distance(a,b):
     '''
-    calculates the distance between two points - this is here incase I want to speed up with 
-    cython
+    This function calculates the distance between two points. Here it has its own wrapper 
+    so that it can be changed to cython in one place if needed. 
+
+    a and b are two vectors.
+
+    Parameters
+    ----------
+        a : list, ndarray 
+        b : list, ndarray 
+
+    Returns
+    -------
+        c : float
     '''
-    return math.dist(a,b)
+    
+    c = math.dist(a,b)
+    return c
 
 def cosine_angles(vec, axis):
+    '''
+    This function calculates the cosine angles needed for the spectral density functions and 
+    correlation functions. 
+    
+    Parameters
+    ----------
+        vec : ndarray 
+            vector for which you want to determine the cosine angles
+
+        axis : ndarray
+            array containing the principle axis of the system
+
+    Returns
+    -------
+        c : list 
+            cosine angles [ex,ey,ez]
+    '''
 
     p1,p2,p3 = axis
     mag = np.linalg.norm(vec)
     ex = np.dot(vec, p1)/mag
     ey = np.dot(vec, p2)/mag
     ez = np.dot(vec, p3)/mag
-
-    #print('CHECK THE ORDER OF EX, EY,EZ')
     return [ex,ey,ez]
 
 def delta2k(float da, float diso, float L2):
+    '''
+    This function calculates delta2k values used in the anisotropic correlation 
+    functions and spectral densities. See:
+
+    1) Rotational diffusion anisotropy of proteins from simultaneous analysis of 
+    15N and 13Cα nuclear spin relaxation
+    DOI: 10.1023/a:1018631009583
+
+    Parameters
+    ----------
+        da : float 
+        diso : float 
+        L2 : float
+
+    Returns
+    -------
+        total : float
+
+    '''
+
     cdef float top = da - diso
     cdef float bot = np.sqrt(diso**2 - L2) 
-    return top/bot
+    cdef total = top/bot
+    return total
 
 def amp_part2(float delta, float a,float b, float c):
+    '''
+    This function calculates part of the equation for amplitudes 
+    4 and 5 that describe the anisotropic diffusion. 
+
+    See: 
+    1) Rotational diffusion anisotropy of proteins from simultaneous analysis of 
+    15N and 13Cα nuclear spin relaxation
+    DOI: 10.1023/a:1018631009583
+
+    Parameters
+    ----------
+        delta : float 
+        a : float 
+        b : float
+        c : float
+
+    Returns
+    -------
+        float
+    '''
     return delta*(3*(a**4)+6*(b**2)*(c**2)-1)
 
 def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez):
 
     '''
-    When looking at anisotropic spectral density functions we 
-    often need to determine effective correlation times and amplitudes 
-    to replace the isotropic tc
+    This function calculates the amplitudes and times/taus that describe anisotropic 
+    tumbling. 
+
+    See: 
+    1) Rotational diffusion anisotropy of proteins from simultaneous analysis of 
+    15N and 13Cα nuclear spin relaxation
+    DOI: 10.1023/a:1018631009583
+    
+    Parameters
+    ----------
+        dx : float
+            xx component of the diffusion tensor  
+        dy : float 
+
+            yy component of the diffusion tensor 
+        
+        dz : float
+            zz component of the diffusion tensor 
+
+        ex : float
+            x cosine angle 
+        ey : float 
+            y cosine angle 
+        
+        ez : float
+            z cosine angle 
+
+    Returns
+    -------
+        taus : list 
+            contains the time scales 
+        amplitudes : list
+            contains the amplitudes
     '''
 
     #calculate some values 
@@ -120,13 +251,24 @@ def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez):
         taus = [1/(6*diso)]
         amplitudes = [1]
 
-    #print(taus, amplitudes)
     return taus, amplitudes
 
-# def matrix_exp(np.ndarray[np.float_t, ndim=2] a):
 def matrix_exp( np.ndarray[np.float64_t, ndim=2] A):
     '''
-    This function should give the same result as scipy.lingalg.expm
+    This function calculates a matrix exponencial. In the simulation of the
+    relaxometry intensities this is the slowest step and should be optimised the 
+    most. The implimentation here should give the same results as scipy.lingalg.expm.
+
+    Currently this is done with numpy and Cython however I am open to other
+    alternatives.
+
+    Parameters
+    ----------
+        A :  np.ndarray[np.float64_t, ndim=2]
+
+    Returns
+    -------
+        matrix_exp : np.ndarray[np.float64_t, ndim=2]
     '''
 
     cdef np.ndarray[np.float64_t, ndim=1] eigenvalues
@@ -140,10 +282,34 @@ def matrix_exp( np.ndarray[np.float64_t, ndim=2] A):
     intermediate = np.matmul(eigenvectors, diagonal_matrix)
     matrix_exp = np.matmul(intermediate, np.linalg.inv(eigenvectors))
 
-    return matrix_exp
+    return matrix_exp #scilinalg.expm(A) #
 
 def construct_operator( matricies, times, product=True):
+    '''
+    This function constructs the propergator from the relaxation matrix 
+    e^(-Rt). 
 
+    If matricies is a list and produce is true then they will all be multiplied 
+    together.  
+
+    Notes: 
+    1) I need to check the order in which they are multiplied
+    2) Check the rolling does not transpose the matrix 
+
+    Parameters
+    ----------
+        matricies :  ndarray 
+            The relaxation matricies
+
+        times : ndarray, list 
+            A list of times for which you relax with a given matrix in matricies
+
+    Returns
+    -------
+        operators : np.ndarray
+            An ndarray with the operators as 2D arrays
+
+    '''
     # the order in which these operators are listed I *think* is correct once we reverse them 
     # also check that the axis rolling is not transposing the matrix. Probably should look at this 
     # with an example
@@ -173,6 +339,31 @@ def calc_csa_axis(resid, atomname, csa_orientations_info, uni):
     Note that two definitions are used. These are refered to 'TYPE 1' and 'TYPE 2'
     TYPE 1 : Bryce, D. L.; Grishaev, A.; Bax, A. J. Am. Chem. Soc. 2005, 127, 7387-7396.
     TYPE 2 : Ying, J.; Grishaev, A.; Bryce, D. L.; Bax, A. J. Am. Chem. Soc. 2006, 128, 11443-11454.
+
+    Parameters
+    ----------
+        resid :  int 
+            residue ID 
+
+        atomname : str
+            atom name
+
+        csa_orientations_info : list
+            information about the CSA tensor orientation. This depends on the definition (TYPE1 vs TYPE2)
+
+        uni : MDAnalysis universe
+            Universe of the MDsimulation / structure. 
+
+
+    Returns
+    -------
+        d_selected_axis : ndarry
+            This is a selected main axis, not really used anymore
+
+        d : ndarry
+            This is a ndarray with all the three axis of the CSA tensor
+
+
     '''
 
     type_ = csa_orientations_info[0]
