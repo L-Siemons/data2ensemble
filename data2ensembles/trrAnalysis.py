@@ -1155,23 +1155,23 @@ class AnalyseTrr():
         
         atom_info = self.make_atom_pairs_list(atom_names)
         correlation_functions = []
+        times = []
         cosine_angles = []
         #axis = self.uni.select_atoms('all').principal_axes()
 
-        for res1, res2, atom_name1, atom_name2 in atom_info:
+        print('loading data for fitting diffusion tensor')
+        for res1, res2, atom_name1, atom_name2 in tqdm(atom_info):
             if blocks == True:
                 name = f"{self.path_prefix}_diffusion_rotacf/rotacf_block_{block}_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
             else:
                 name = f"{self.path_prefix}_diffusion_rotacf/rotacf_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
 
-            #print(name)
-            #print(name)
             temp = self.read_gmx_xvg(name)
             x = temp.T[0]
             y = temp.T[1]
 
-            y = y[x<threshold]
-            x = x[x<threshold]
+            y = y[x<threshold][::100]
+            x = x[x<threshold][::100]
 
             atom1_poss = self.uni.select_atoms(f'resid {res1} and name {atom_name1}')[0].position
             atom2_poss = self.uni.select_atoms(f'resid {res2} and name {atom_name2}')[0].position
@@ -1179,6 +1179,7 @@ class AnalyseTrr():
 
             cosine_angles.append(angs)
             correlation_functions.append(y)
+            times.append(x)
 
         #define the model 
         def model(params, time, cosine_angles):
@@ -1187,27 +1188,37 @@ class AnalyseTrr():
             dy = params['dy']
             dz = params['dz']
             ds = (dx,dy,dz) 
-            return self.correlation_function_anisotropic(time, ds, cosine_angles)
+            mod = self.correlation_function_anisotropic(time, ds, cosine_angles)
+            return mod
 
-        def residual(params, cosine_angles, correlation_functions, time):
+        def residual(params, cosine_angles, correlation_functions, times):
 
             diffs = []
 
-            for angles, corri in zip(cosine_angles, correlation_functions):
+            # print(cosine_angles)
+
+            for angles, corri, time in zip(cosine_angles, correlation_functions, times):
                 current_model = model(params, time, angles)
                 current_diffs = corri - current_model
                 diffs.append(current_diffs)
+            
+            return np.concatenate(diffs)
 
+        def cb_iteration(params, iter, resid, cosine_angles, correlation_functions, times):
+            '''
+            print out between iterations
+            '''
 
-            return np.array(diffs)
+            rmsd = np.mean(np.absolute(resid))
+            print(f'it: {iter} {rmsd}')
 
         Params = Parameters()
-        Params.add('dx', value=1/(3e-9), min=0,)
-        Params.add('dy', value=1/(3e-9), min=0,)
-        Params.add('dz', value=1/(5e-9), min=0,)
+        Params.add('dx', value=22289619, min=0, vary=True)
+        Params.add('dy', value=21384570, min=0, vary=True)
+        Params.add('dz', value=36879686, min=0, vary=True)
 
-        minner = Minimizer(residual, Params, fcn_args=(cosine_angles, correlation_functions, x))
-        result = minner.minimize()
+        minner = Minimizer(residual, Params, fcn_args=(cosine_angles, correlation_functions, times), iter_cb=cb_iteration)
+        result = minner.minimize(method='powel')
         res_params = result.params
         report_fit(result)
 
@@ -1226,7 +1237,6 @@ class AnalyseTrr():
             plt.plot(x,current_model, label='model')
             plt.plot(x,corri, label='rotacf')
             plt.legend()
-            plt.xscale('symlog')
             plt.savefig(name)
             plt.close()
 
@@ -1346,7 +1356,7 @@ class AnalyseTrr():
             r2_out.close()
             hetnoe_out.close()
 
-    def calculate_relaxometry_intensities(self, atom_names, diffusion_file, fields, 
+    def calculate_relaxometry_intensities(self, atom_names, diffusion_file, 
         x, y='h', blocks=False,dna=False, write_out=False, prefix='', ignore_atoms=[]):
         '''
         This function calculate r1 r2 and hetnoe at high field for a X-Y spin system
@@ -1424,7 +1434,7 @@ class AnalyseTrr():
                 atom_check = True
                 x_spin = "C1'"
                 y_spin = "H1'"                
-                active_protons = ["H1'", "H2'1",  "H2'2"] 
+                active_protons = ["H1'", "H2'1","H2'2"] 
                 passive_protons = active_protons
                 operator_size = 1+1 + len(active_protons)*2
 
@@ -1432,7 +1442,7 @@ class AnalyseTrr():
                 atom_check = True
                 x_spin = "C5"
                 y_spin = "H5"
-                active_protons = ["H5", "H6",  "H41",  "H42"] 
+                active_protons = ["H5", "H6"] 
                 passive_protons = active_protons
                 operator_size = 1+1 + len(active_protons)*2
 
@@ -1446,6 +1456,7 @@ class AnalyseTrr():
                     #print(f'field  {i}')
                     traj = Shuttling.trajectory_time_at_fields[i]
                     forwards_field, forwards_time, backwards_field, backwards_time = traj 
+                    
                     relaxation_matricies_forwards = relax_mat.relaxation_matrix(spectral_density_params, 
                     res1, 
                     spectral_density, 
@@ -1524,8 +1535,8 @@ class AnalyseTrr():
                     #full_propergators =  delay_propergators # [np.linalg.multi_dot([forwrds_propergators, i, backwards_operators]) for i in delay_propergators]
                     full_propergators = [np.linalg.multi_dot([stablaization_operator, backwards_operators, i, forwrds_propergators]) for i in delay_propergators]
 
-                    print('Relaxation matrix', self.resid2type[res1][1], atom_name1)
-                    print(np.array_str(low_field_relaxation_matrix.T[0], precision=2, max_line_width=1000, suppress_small=True))
+                    # print('Relaxation matrix', self.resid2type[res1][1], atom_name1)
+                    # print(np.array_str(low_field_relaxation_matrix.T[0], precision=2, max_line_width=1000, suppress_small=True))
 
                     #w, v = np.linalg.eig(low_field_relaxation_matrix.T[0])
                     #print(np.array_str(w, precision=3, max_line_width=100, suppress_small=True))
@@ -1548,7 +1559,6 @@ class AnalyseTrr():
                     # b = np.dot(a, full_propergators[-1].T)
                     # # print(np.array_str(b, precision=3, max_line_width=100, suppress_small=True))
 
-
                     intensities = [np.dot(i, experimets) for i in full_propergators]
                     self.relaxometry_inensities[(res1, atom_name1,atom_name2)][i] = [Shuttling.experiment_info[i]['delays'], intensities]
 
@@ -1567,6 +1577,7 @@ class AnalyseTrr():
             self.apparent_rates[i] = []
             for field in self.relaxometry_inensities[i]:
 
+                #print(field)
                 x,y = self.relaxometry_inensities[i][field]
                 x = np.array(x)
 
@@ -1583,16 +1594,16 @@ class AnalyseTrr():
                 #report_fit(result)
                 self.apparent_rates[i].append([field, res_params['r']])
 
-                plt.title(i)
-                plt.scatter(x,y)
+                # plt.title(i)
+                # plt.scatter(x,y)
                 x_model = np.linspace(min(x), max(x), 20)
                 #print(x, x_model, min(x), max(x))
                 r = res_params['r']
-                plt.plot(x_model, model(res_params, x_model), label=f'field: {field:.1f}, Rate: {r:.1f}')
+                # plt.plot(x_model, model(res_params, x_model), label=f'field: {field:.1f}, Rate: {r:.1f}')
 
             
-            plt.legend()
-            plt.show()
+            # plt.legend()
+            # plt.show()
 
     def plot_relaxometry_coherences(self):
 
