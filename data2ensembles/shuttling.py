@@ -47,7 +47,7 @@ class ShuttleTrajectory():
 
     Methods
     -------
-    distance_to_field(a)
+    field_to_distance(a)
         This is a scipy 1D interpolator to convert the distance to the 
         field strngth in the magnet
 
@@ -67,16 +67,27 @@ class ShuttleTrajectory():
         self.distance_field_measured = np.genfromtxt(magnetic_fields_trajectory_file, delimiter="\t")
 
         # this section assumes that the fields file is written in assending order
-        self.distance_to_field = scipy.interpolate.interp1d(
+        # print('fields', self.distance_field_measured.T[1])
+        # print('distance', self.distance_field_measured.T[0])
+        
+        self.field_to_distance = scipy.interpolate.interp1d(
             self.distance_field_measured.T[1], 
             self.distance_field_measured.T[0])
+
+        self.distance_to_field = scipy.interpolate.interp1d(
+            self.distance_field_measured.T[0], 
+            self.distance_field_measured.T[1])
+        # fields = np.linspace(1, 14, 100)
+        # test = self.field_to_distance(fields)
+        # plt.plot(fields, test)
+        # plt.show()
 
         # interpolate the curve 
         field_max = max(self.distance_field_measured.T[1])
         field_min = min(self.distance_field_measured.T[1])
 
         fields = np.arange(field_min, field_max, field_increment)
-        distances = self.distance_to_field(fields)
+        distances = self.field_to_distance(fields)
 
         # this is the trajectory with a given increment in tesla
         # fabien said that I could have the fields on a log scale
@@ -134,6 +145,7 @@ class ShuttleTrajectory():
         # get the travel time set by the user 
         travel_time = self.experiment_info[field]['travel_time']
         half_time = travel_time/2
+
         
         # the distance that corresponds to the field
         total_distance = self.fields_distances_dict[field]
@@ -173,7 +185,7 @@ class ShuttleTrajectory():
         # print('decc_distances', decc_distances)
         # print('decc_times', decc_times)
 
-        # # plots time vs distance 
+        # plots time vs distance 
         # plt.title(f'{field}')
         # plt.plot(acc_time, acc_distances, label='acceleration')
         # plt.plot(decc_times, decc_distances, label='decceleration')
@@ -184,12 +196,16 @@ class ShuttleTrajectory():
 
         total_time = np.concatenate([acc_time, decc_times])
         total_distances =  np.concatenate([acc_distances, decc_distances])
-
         acc_fields = self.distance_to_field(acc_distances)
         decc_fields = self.distance_to_field(decc_distances)
+        
         total_fields = np.concatenate([acc_fields, decc_fields])
 
-        # plt.title('time v field')
+        # print(field)
+        # print('total fields', total_fields)
+        # print('total time', total_time)
+
+        # plt.title(f'time v field {field}')
         # plt.scatter(acc_time, acc_fields, label='acceleration')
         # plt.scatter(decc_times, decc_fields, label='decceleration')
         # plt.plot(total_time, total_fields)
@@ -201,13 +217,15 @@ class ShuttleTrajectory():
         # #time spent at each field going forwards
         field_centers = (total_fields[1:] + total_fields[:-1]) / 2
         time_taken = total_time[1:] - total_time[:-1]
+        
+        # print('time_taken', time_taken)
+        # print('time_taken sum ', sum(time_taken))
 
         # # #plot time at each field
         # plt.plot(time_taken, field_centers)
         # plt.scatter(time_taken, field_centers)
         # plt.xlabel('time (s)')
         # plt.ylabel('field (T)')
-        # plt.yscale('log')
         # plt.show()        
 
         return field_centers, time_taken
@@ -242,7 +260,6 @@ class ShuttleTrajectory():
             # print('back')
             # backwards = self.construct_single_trajectory(field, all_dists, all_fields)
             # backwards_field_center, backwards_time_taken = backwards
-
             self.trajectory_time_at_fields[field] = [forwards_field_center, forwards_time_taken, 
                                                     backwards_field_center, backwards_time_taken]
 
