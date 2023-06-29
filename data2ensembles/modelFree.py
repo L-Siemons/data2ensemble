@@ -36,10 +36,129 @@ PhysQ = utils.PhysicalQuantities()
 print(data2ensembles.rates.__file__)
 
 class ModelFree():
-    """This is class that contains functions for analysing NMR relaxation rates
-    using model free approaches"""
+    """This class impliments model free calculations
 
-    def __init__(self,):
+    Parameters:
+    -----------
+    dx : float
+        Dxx component of the diffusion tensor
+    dy : float
+        Dyy component of the diffusion tensor
+    dz : float
+        Dzz component of the diffusion tensor
+
+    Attributes
+    ----------
+    r1_path : str, None
+        path to r1 data
+
+    r2_path : str, None
+        path to r2 data
+
+    hetnoe_path : str, None
+        path to hetronuclear NOE data
+
+    r1_err_path : str, None
+        path to r1 errors
+
+    r2_err_path : str, None
+        path to r2 errors
+
+    hetnoe_err_path : str, errors
+        path to hetronuclear NOE data
+
+    path_prefix : str 
+        this is a prefix used for the output files
+
+    PhysQ : utils.PhysicalQuantities()
+        This attribute is a class containing information about 
+        physical qunatities. It can be changed to a new / edited copy if desired. 
+
+    diffusion_tensor : None, list
+        diffusion tensor. Currently it seems like this is not in use 
+
+    high_fields : ndarray 
+        the high fields for the R1, R2 and het NOE experiments
+
+    model_high_fields : ndarray
+        high fields used for drawing a smooth model line
+
+    spectral_density : function from data2ensembles.spectralDensity
+        This is the model spectral density function. The default is 
+        data2ensembles.spectralDensity.J_anisotropic_emf
+
+    scale_diffusion : bool 
+        apply a linear scaling to the diffusion tensor when fitting extended model free
+    
+    diffusion : list 
+        contains the diagonalised diffusion tensor (dx,dy,dz)
+
+    Methods
+    -------
+    load_data()
+        loads in the high field data after the paths are set
+
+    load_low_field_info(file, distance_incrementing=0.5)
+        this loads the low field information
+
+    calc_cosine_angles_and_distances(atom_names, dist_skip=1)
+        This calculates the cosine angles and distances from the reference structure
+
+    get_atom_info_from_tag(i)
+        gets the atom info from the tag 
+
+    get_c1p_keys()
+        gets the keys for the C1' atoms in DNA/RNA
+
+    load_low_field_data(prefix)
+        This loads the intensities of relaxometry datasets that have been fit
+        with peakfit. 
+
+    set_low_field_errors(fields, errors)
+        set the low field errors if you want different values to what is in the 
+        peak fit files
+
+    read_pic_for_plotting(model_pic, atom_name)
+        reads the picle file and returns some information 
+
+    model_hf(params,res_info, fields)
+        models the highfield data
+
+    model_lf_single_field_intensities(params, low_field, res_info, protons)
+        models the lowfield intensities
+
+    subtracts_and_divide_by_error(a,b,c)
+        calculates (a-b)/c
+
+    residual_hf(self, params, r1, r2, hetnoe, r1_err, r2_err, noe_err, res_info)
+        calculates the residual of the high field data and the model
+        for leastsquares fitting
+
+    residual_lf(self, params, low_field, resinfo, protons, intensities, intensity_errors)
+        calculates the residual of the low field intensities and the model
+        for leastsquares fitting    
+
+    residual_hflf(self, params, hf_data, hf_error, res_info, low_fields, protons,intensities, intensity_errors)
+        calculates a residual for both high field and low field data
+
+    fit_single_residue(i)
+        fits model free to a single residue
+
+    per_residue_emf_fit(lf_data_prefix='', lf_data_suffix='', scale_diffusion=False, select_only_some_models=False, 
+        fit_results_pickle_file='model_free_parameters.pic', cpu_count=-1)
+        Fits model free to all residues
+
+    plot_model_free_parameters( atom_name, model_pic='model_free_parameters.pic', plot_name='model_free_params.pdf', showplot=False)
+        plots the model free parameters
+
+    plot_r1_r2_noe(atom_name, model_pic='model_free_parameters.pic', fields_min=14, fields_max=25, plot_ranges=[[0,3.5], [10,35], [1, 1.9]], per_residue_prefix='hf_rates'):
+        plots the highfield data and the model 
+
+    plot_relaxometry_intensities(atom_name, protons,model_pic='model_free_parameters.pic',folder='relaxometry_intensities/')
+        plots the experimental and modeled relaxometry data
+    """
+
+    def __init__(self,dx,dy,dz):
 
         self.r1_path = None
         self.r2_path = None 
@@ -50,15 +169,29 @@ class ModelFree():
         self.path_prefix = 'model'
         self.PhysQ = PhysQ
 
-        fields = None
+        #fields = None
         self.diffusion_tensor = None
         self.pdb = None
         self.high_fields = None
         self.model_high_fields = None
         self.spectral_density = specDens.J_anisotropic_emf
 
+        self.scale_diffusion=False, 
+        self.diffusion = [dx,dy,dz]
+        self.fit_results_pickle_file='model_free_parameters.pic'
+
 
     def load_data(self):
+        '''
+        This function laods the rates and errors specified in:
+
+        self.r1_path
+        self.r2_path 
+        self.hetnoe_path 
+        self.r1_err_path
+        self.r2_err_path 
+        self.hetnoe_err_path
+        '''
 
         rates = [self.r1_path, self.r2_path, self.hetnoe_path, 
                 self.r1_err_path, self.r2_err_path, self.hetnoe_err_path]
@@ -84,11 +217,44 @@ class ModelFree():
         self.r2_err ,_ = utils.read_nmr_relaxation_rate(self.r2_err_path)
         self.hetnoe_err ,_ = utils.read_nmr_relaxation_rate(self.hetnoe_err_path)
 
-    def load_low_field_info(self, file, distance_incrementing=0.5):
-        self.ShuttleTrajectory = shuttling.ShuttleTrajectory(file, distance_incrementing = distance_incrementing)
+    def load_low_field_info(self, file, field_increment=0.5):
+        '''
+        This function loads the low field information and sets the distance increment
+        for the shuttling trajectory. 
+
+        This function defines the attributes: 
+        self.ShuttleTrajectory
+
+        Parameters
+        ----------
+        file : str
+            file with the low field information
+        
+        distance_incrementing : float
+            the distance increment used to calculate the shuttling trajectory
+
+        '''
+        self.ShuttleTrajectory = shuttling.ShuttleTrajectory(file, field_increment = field_increment)
         self.ShuttleTrajectory.construct_all_trajectories()
 
     def calc_cosine_angles_and_distances(self, atom_names, dist_skip=1):
+        '''
+        This function determines the cosine angles
+
+        This function defines the attributes: 
+        self.cosine_angles
+        self.distances
+
+        Parameters
+        ----------
+        atom_names : list 
+            list of atom pairs 
+
+        dist_skip : int 
+            with which stride do you want to calculate the distances over the 
+            MDAnalysis trajectory
+
+        '''
         structure_analysis = trrAnalysis.AnalyseTrr(self.pdb, self.pdb, './')
         structure_analysis.load_trr()
 
@@ -109,11 +275,25 @@ class ModelFree():
         self.cosine_angles = structure_analysis.cosine_angles
         self.distances = structure_analysis.md_distances
 
+    def residual_to_chi2(self,a):
+        '''
+        Parameters
+        ---------
+        a : ndarray
+            converts the residual to a chisquare 
+        '''
+        return np.mean(a**2)
+
     def get_atom_info_from_tag(self, i):
-        #need to fix this
+        '''
+        convert the atom tag to the atom name
+        '''
         return utils.get_atom_info_from_tag(i)
 
     def get_c1p_keys(self,):
+        '''
+        Get all the keys in the R1 dataset that have the C1' atom 
+        '''
         c1p_keys = []
         for i in self.r1:
             if "C1'" in i:
@@ -121,6 +301,14 @@ class ModelFree():
         return c1p_keys
 
     def load_low_field_data(self, prefix):
+        '''
+        This function loads all the low field intensities from peakfit output files. 
+
+        Parameters
+        ----------
+        prefix : str 
+            prefix for the directory where the data is stored 
+        '''
         
         # the delays are saved in the Shuttling class, here we will read it in again 
         # but likely not use it.  
@@ -149,9 +337,64 @@ class ModelFree():
 
                     self.low_field_intensities[f][key] = intensities
                     self.low_field_intensity_errors[f][key] = errors
+                    #print(f'errors< ', errors)
                     self.low_field_delays[f][key] = delays
 
+    def set_low_field_errors(self, fields, errors):
+        '''
+        This function takes a list of fields and then changes the errors. 
+        you might want to do this if you used the incorrect error when fitting the peaks 
+        and dont want to re-run the whole peak fitting - its a but quick and dirty, but atleast its well 
+        documented! 
+
+        Note that this will set it for all the atom types/pairs 
+
+        Parameters
+        ----------
+        fields : list 
+            list of low fields 
+
+        errors : list 
+            list of errors 
+        '''
+
+        for f, err in zip(fields, errors):
+
+            if f not in self.low_field_intensity_errors:
+                print(f'Warning: Not changing the error for field: {f}')
+
+            else:
+                for key in self.low_field_intensity_errors[f]:
+                    error_list = [err for _ in self.low_field_intensity_errors[f][key]]
+                    self.low_field_intensity_errors[f][key] = error_list
+
+
     def read_pic_for_plotting(self,model_pic, atom_name):
+        '''
+        Read the pic file containing the model free parameters for plotting 
+        
+        Parameters
+        ----------
+        model_pic : str 
+            path to the model free parameters in a picle file 
+
+        atom_name : list 
+            pairs of atom names 
+
+        Returns
+        -------
+        models : dictionary of Results class from Lmfit
+            contains the Result from fitting in Lmfit
+
+        models_resid : dictionary
+            contains models indexed by the residue number 
+
+        sorted_keys : set, list
+            keys sorted but size 
+
+        model_resinfo : dictionary
+            key is the residue id and the entry contains the atom information
+        '''
         # load the model
         models = utils.load_pickle(model_pic)
         models_resid, model_resinfo = utils.dict_with_full_keys_to_resid_keys(models, atom_name)
@@ -160,7 +403,27 @@ class ModelFree():
 
     def model_hf(self, params,res_info, fields):
         '''
-        This is is the model for the R1, R2 and HetNOE data 
+        Model for fitting high field R1, R2 and hetro nuclear NOE
+
+        Parameters
+        ----------
+        params : lmfit parameters class, dictionary
+            contains the parameters for the selected spectral density class 
+
+        res_info : list 
+            list containing the residue information
+
+        fields : ndarray 
+            contains the fields for the data stored in the R1,R2, and HetNOE files. 
+
+        Returns
+        -------
+        model_r1 : ndarray 
+            array of model R1 values
+        model_r2 : ndarray 
+            array of model R2 values
+        model_noe : ndarray 
+            array of model NOE values
         '''
 
         resid, resname, atom1, atom2 = res_info
@@ -181,8 +444,29 @@ class ModelFree():
         return model_r1, model_r2, model_noe
     
     def model_lf_single_field_intensities(self, params, low_field, res_info, protons):
+        '''
+        Model for fitting low field intensities
 
-        # I wanted to profile this function 
+        Parameters
+        ----------
+        params : lmfit parameters class, dictionary
+            contains the parameters for the selected spectral density class 
+
+        low_field : float
+            the low field we are simulating at
+
+        res_info : list 
+            list containing the residue information
+
+        protons : list 
+            list of protons we want to consider in our interactions 
+
+        Returns
+        -------
+        intensities : ndarray 
+            list of intensities at each delay 
+
+        '''
         time_dict = {}
 
         resid, restype, x_spin, y_spin = res_info
@@ -282,16 +566,56 @@ class ModelFree():
         
         return intensities
 
-    def divide_by_error(self, a,b,c):
+    def subtracts_and_divide_by_error(self, a,b,c):
+        '''
+        Parameters
+        ----------
+        a : float
+        b : float 
+        c : float 
+        '''
         return (a-b)/c
 
     def residual_hf(self, params, r1, r2, hetnoe, r1_err, r2_err, noe_err, res_info):
+        '''
+        calculates the residuals for the high field experiments: R1, R2, hetNOE
+
+        Parameters
+        ----------
+        params : lmfit parameters class, dictionary
+            contains the parameters for the selected spectral density class 
+
+        r1 : ndarray 
+            experimental R1 values
+
+        r2 : ndarray 
+            experimental r2 values 
+
+        hetnoe : ndarray 
+            experimental hetNOE values 
+
+        r1_err : ndarray 
+            experimental R1 errors
+
+        r2_err : ndarray 
+            experimental r2 errors 
+
+        hetnoe_err : ndarray 
+            experimental hetNOE errors 
+
+        res_info : list 
+            list containing the residue information
+
+        Returns 
+        -------
+        ndarray : residuals
+        '''
         
         model_r1, model_r2, model_noe = self.model_hf(params,res_info, self.high_fields)
         
-        r1_diff = self.divide_by_error(r1, model_r1,r1_err)
-        r2_diff = self.divide_by_error(r2, model_r2,r2_err)
-        noe_diff = self.divide_by_error(hetnoe, model_noe,noe_err)
+        r1_diff = self.subtracts_and_divide_by_error(r1, model_r1,r1_err)
+        r2_diff = self.subtracts_and_divide_by_error(r2, model_r2,r2_err)
+        noe_diff = self.subtracts_and_divide_by_error(hetnoe, model_noe,noe_err)
         constraint = 0
 
         if params['tau_s'] < params['tau_f']:
@@ -300,6 +624,35 @@ class ModelFree():
         return np.concatenate([r1_diff.flatten(), r2_diff.flatten(), noe_diff.flatten(), [constraint]])
 
     def residual_lf(self, params, low_field, resinfo, protons, intensities, intensity_errors):
+
+        '''
+        calculates the residuals for the relaxometry inensities
+
+        Parameters
+        ----------
+        params : lmfit parameters class, dictionary
+            contains the parameters for the selected spectral density class 
+
+        low_field : float
+            the low field we are simulating at
+
+        res_info : list 
+            list containing the residue information
+
+        protons : list 
+            list of protons we want to consider in our interactions 
+
+        intensities : ndarray 
+            experimental intensities 
+
+        intensities_error s: ndarray 
+            experimental intensity errors
+
+        Returns 
+        -------
+        diffs : ndarray
+            residuals between experimental and modeled errors
+        '''
 
         diffs = []
         if type(params) is not dict:
@@ -310,30 +663,76 @@ class ModelFree():
             intensities = self.model_lf_single_field_intensities(params, field, resinfo, protons)
             # the model returns back all the populations 
             intensities = np.array([i[1] for i in intensities])
-
+            exp_error = np.array(exp_error)
+            len_error = len(exp_error)
+            exp_intensity = np.array(exp_intensity)
             # here we need a prefactor to scale our calculated intensities since we do not 
             # know what the zero point is. 
 
-            factor = np.mean(exp_intensity/intensities)
-            diff = (factor*intensities - exp_intensity)/(exp_error*(exp_intensity))
+            factor = np.mean(exp_intensity)/np.mean(intensities)
+            diff = (factor*intensities - exp_intensity)/(exp_error*len_error)
             diffs = diffs + diff.tolist()
 
         return diffs
 
     def residual_hflf(self, params, hf_data, hf_error, res_info, low_fields, protons,intensities, intensity_errors):
+        '''
+        calculates the residuals for highfield data and low field data
 
+        Parameters
+        ----------
+        params : lmfit parameters class, dictionary
+            contains the parameters for the selected spectral density class 
+
+        hf_data : tupple 
+            contains ndarrays for the high field data 
+
+        hf_error : tupple 
+            contains ndarrays for the high field errors 
+
+        res_info : list 
+            list containing the residue information      
+
+        low_fields : list
+            list of the low fields
+
+        protons : list 
+            list of protons we want to consider in our interactions 
+
+        intensities : list 
+            experimental intensities for each low field 
+
+        intensities_error s: list 
+            experimental intensity errors for each low field
+
+        Returns 
+        -------
+        diffs : ndarray
+            residuals between experimental and modeled errors
+
+        '''
         # high field data
+        
         r1, r2, hetnoe = hf_data
         r1_err, r2_err, noe_err = hf_error
 
         # for i in range(50):
         hf_residual = self.residual_hf(params, r1, r2, hetnoe, r1_err, r2_err, noe_err, res_info)
-        return hf_residual
+        #return hf_residual
+        
         lf_residual = self.residual_lf(params, low_fields, res_info, protons, intensities, intensity_errors)
         return np.concatenate([hf_residual, lf_residual])
 
     def fit_single_residue(self, i):
+        '''
+        This function fits all the models available in model free (set by generate_mf_parameters())
+        and selects the best one based on the lowest BIC. 
 
+        Paramteres
+        ----------
+        i : str
+            the residue tag
+        '''
         print(i)
         # get the atom info
         res_info = utils.get_atom_info_from_tag(i)
@@ -344,7 +743,9 @@ class ModelFree():
         bics[i] = 10e1000
 
         # the rows are Sf, Ss, tauf, taus, might be best to take this out and put it in its own function
-        params_models = generate_mf_parameters(scale_diffusion=False)
+        dx,dy,dz = self.diffusion
+        params_models = generate_mf_parameters(dx,dy,dz, scale_diffusion=self.scale_diffusion)
+        
         for params in params_models:
 
             resid, resname, atom1, atom2 = res_info
@@ -385,9 +786,7 @@ class ModelFree():
     def per_residue_emf_fit(self, 
         lf_data_prefix='', 
         lf_data_suffix='', 
-        scale_diffusion=False, 
         select_only_some_models=False, 
-        fit_results_pickle_file='model_free_parameters.pic', 
         cpu_count=-1):
 
         '''
@@ -421,8 +820,58 @@ class ModelFree():
         print("extended model free fitting Elapsed time: ", elapsed_time) 
         # save the file
         
-        with open(fit_results_pickle_file, 'wb') as handle:
+        with open(self.fit_results_pickle_file, 'wb') as handle:
             pic.dump(models, handle)
+
+    def print_final_residuals(self, pickle_path='default'):
+
+        '''
+        This function takes the output from an extended model free 
+        fitting and then prints out the residuals
+
+        Parameters
+        ----------
+
+        load_pickle : str
+            if pickle_path is defined as 'default' then the atribute 
+            self.fit_results_pickle_file is used. Otherwise it will take the 
+            path to the pickle file and load this. This should be similar to the 
+            output for per_residue_emf_fit()
+         '''
+
+        if pickle_path=='default':
+            pickle_path = self.fit_results_pickle_file
+
+        with open(pickle_path, "rb") as input_file:
+            models = pic.load(input_file)
+
+        print('ID\tlf_X2\thf_X2')
+        for i in models:
+
+            # this section could probably be grouped into a function 
+            # as it is copied from fit_single_residue()
+
+            res_info = utils.get_atom_info_from_tag(i)
+            resid, resname, atom1, atom2 = res_info
+            protons = ("H1'", "H2'", "H2''")
+
+            low_fields = list(self.ShuttleTrajectory.experiment_info.keys())
+            intensities = []
+            intensity_errors = []
+
+            for f in low_fields:
+                intensities.append(self.low_field_intensities[f][i])
+                intensity_errors.append(self.low_field_intensity_errors[f][i])
+
+            lf_residual = self.residual_lf(models[i].params, low_fields, res_info, protons, intensities, intensity_errors)
+            lf_chisq = self.residual_to_chi2(np.array(lf_residual))
+
+            hf_residual_args = [models[i].params, self.r1[i], self.r2[i], self.hetnoe[i], 
+                                self.r1_err[i], self.r2_err[i], self.hetnoe[i], res_info]
+            
+            hf_residual = self.residual_hf(*hf_residual_args)
+            hf_chisq = self.residual_to_chi2(np.array(hf_residual))
+            print(f"{i}\t{lf_chisq:.2e}\t{hf_chisq:.2e}\t")
 
     def plot_model_free_parameters(self, atom_name, model_pic='model_free_parameters.pic', plot_name='model_free_params.pdf', showplot=False):
 
@@ -607,7 +1056,7 @@ class ModelFree():
                 plt.savefig(f'{folder}field_{f}_{tag}.pdf')
                 plt.close()
 
-def generate_mf_parameters(scale_diffusion=False, diffusion=None):
+def generate_mf_parameters(dx,dy,dz,scale_diffusion=False, diffusion=None):
     if scale_diffusion == False:
         models_state = [[True, 1, 0, 0, False],
                   [True, 1, True, 0, False], 
@@ -633,12 +1082,12 @@ def generate_mf_parameters(scale_diffusion=False, diffusion=None):
         params = Parameters()
         #internal dynamics 
         if mod[3] == True:
-            params.add('tau_s', value=0.5e-9, vary=True, max=10e-9, min=0)
+            params.add('tau_s', value=0.5e-9, vary=True, max=15e-9, min=10e-12)
         else:
-            params.add('tau_s', value=mod[3], vary=False, min=0)
+            params.add('tau_s', value=mod[3], vary=False, min=10e-12)
 
         if mod[1] == True:
-            params.add('Ss', value=0.8, min=0, vary=True, max=1)
+            params.add('Ss', value=0.8, min=0.4, vary=True, max=1)
         else:
             params.add('Ss', value=mod[1], vary=False,)
 
@@ -650,7 +1099,7 @@ def generate_mf_parameters(scale_diffusion=False, diffusion=None):
 
         #Sf 
         if mod[0] == True:
-            params.add('Sf', value=0.9, min=0, vary=True, max=1)
+            params.add('Sf', value=0.9, min=0.4, vary=True, max=1)
         else:
             params.add('Sf', value=mod[0], vary=False,)
 
@@ -659,9 +1108,9 @@ def generate_mf_parameters(scale_diffusion=False, diffusion=None):
         #diffusion
 
         if diffusion == None:
-            params.add('dx_fix',  min=0, value=22689512.7513627, vary=False)
-            params.add('dy_fix',  min=0, value=21652874.50933672, vary=False)
-            params.add('dz_fix',  min=0, value=38050175.186921805, vary=False)
+            params.add('dx_fix',  min=0, value=dx, vary=False)
+            params.add('dy_fix',  min=0, value=dy, vary=False)
+            params.add('dz_fix',  min=0, value=dz, vary=False)
             params.add('diff_scale', min=0, value=1, vary=mod[4])
 
         else:
