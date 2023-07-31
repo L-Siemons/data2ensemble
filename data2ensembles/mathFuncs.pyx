@@ -317,10 +317,18 @@ def construct_operator( matricies, times, product=True):
 
 
     if matricies.shape[-1] != 1:
-        operators = [matrix_exp(-1*r*t) for r,t in zip(np.rollaxis(matricies, 2), times)]
-    
+        #operators = [matrix_exp(-1*r*t) for r,t in zip(np.rollaxis(matricies, 2), times)]
+
+        operators = []
+        for  r,t in zip(np.rollaxis(matricies, 2), times):
+            # print('making the operator!', t)
+            # print(np.array_str(r, precision=1, suppress_small=True))
+            operators.append(matrix_exp(-1*r*t))
+
     elif matricies.shape[-1] == 1: 
         roll = np.rollaxis(matricies, 2)
+        # print('>>>')
+        # print(np.array_str(roll[0], precision=1, suppress_small=True) )
         operators = [matrix_exp(-1*roll[0]*t) for t in times]
         return operators
 
