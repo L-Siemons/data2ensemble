@@ -1279,13 +1279,21 @@ class AnalyseTrr():
             print(f'{self.path_prefix}_calculated_relaxation_rates/{prefix}r1.dat)')
             print(f'{self.path_prefix}_calculated_relaxation_rates/{prefix}r2.dat')
             print(f'{self.path_prefix}_calculated_relaxation_rates/{prefix}hetnoe.dat')
+
+            print(f'{self.path_prefix}_calculated_relaxation_rates/{prefix}sigma_noe.dat')
             
             r1_out = open(f'{self.path_prefix}_calculated_relaxation_rates/{prefix}r1.dat', 'w')
             r1_out.write('#header bondName \n' )
+            
             r2_out = open(f'{self.path_prefix}_calculated_relaxation_rates/{prefix}r2.dat', 'w')
             r2_out.write('#header bondName \n' )
+            
             hetnoe_out = open(f'{self.path_prefix}_calculated_relaxation_rates/{prefix}hetnoe.dat', 'w')
             hetnoe_out.write('#header bondName \n' )
+
+            sigma_noe_out = open(f'{self.path_prefix}_calculated_relaxation_rates/{prefix}sigma_noe.dat', 'w')
+            sigma_noe_out.write('#header bondName \n' )
+
 
         # select only the atoms we want
         # probably should make a feature to merge this with the CSA ignore list
@@ -1338,8 +1346,11 @@ class AnalyseTrr():
 
             r2 = d2e.rates.r2_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
                                 cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params)
+            
             hetnoe = d2e.rates.noe_YX(params, spectral_density, fields,
                                rxy, x, r1, y='h', cosine_angles=angs)
+
+            sigma = d2e.rates.r1_reduced_noe_YX(params, spectral_density, fields, rxy, x, cosine_angles=angs)
             
             if write_out == True:
                 key = resname+str(res2)+atom_name2+'-'+resname+str(res1)+atom_name1
@@ -1347,14 +1358,19 @@ class AnalyseTrr():
                 r1_str = ' '.join([str(a) for a in r1])
                 r2_str = ' '.join([str(a) for a in r2])
                 hetnoe_str = ' '.join([str(a) for a in hetnoe])
+                sigma_str = ' '.join([str(a) for a in sigma])
+
                 r1_out.write(f"{key} {r1_str}\n")
                 r2_out.write(f"{key} {r2_str}\n")
                 hetnoe_out.write(f"{key} {hetnoe_str}\n")
+                sigma_noe_out.write(f"{key} {sigma_str}\n")
+
 
         if write_out == True:
             r1_out.close()
             r2_out.close()
             hetnoe_out.close()
+            sigma_noe_out.close()
 
     def calculate_relaxometry_intensities(self, atom_names, diffusion_file, 
         x, y='h', blocks=False,dna=False, write_out=False, prefix='', ignore_atoms=[]):
@@ -1506,7 +1522,7 @@ class AnalyseTrr():
                     forwrds_propergators = mathFunc.construct_operator(relaxation_matricies_forwards, forwards_time)
                     
                     backwards_operators = mathFunc.construct_operator(relaxation_matricies_backwards, backwards_time)
-                    
+
                     stablaization_operator = mathFunc.construct_operator(relaxation_matricies_stablaization_delay,
                         np.array([Shuttling.experiment_info[i]['stabalisation_delay']]), product=False)
                     
@@ -1528,6 +1544,11 @@ class AnalyseTrr():
                     y_spin,
                     active_protons,
                     passive_protons)
+
+                    # print("Field", i)
+                    # print('Relaxation matrix:: ')
+                    # print(sum(forwards_time))
+                    # print(np.array_str(low_field_relaxation_matrix.T, precision=1, suppress_small=True))
 
                     delay_propergators = mathFunc.construct_operator(low_field_relaxation_matrix, 
                                             Shuttling.experiment_info[i]['delays'], product=False)
@@ -1575,6 +1596,7 @@ class AnalyseTrr():
 
         for i in self.relaxometry_inensities:
             self.apparent_rates[i] = []
+            res1, atom_name1,atom_name2 = i 
             for field in self.relaxometry_inensities[i]:
 
                 #print(field)
@@ -1594,16 +1616,17 @@ class AnalyseTrr():
                 #report_fit(result)
                 self.apparent_rates[i].append([field, res_params['r']])
 
-                # plt.title(i)
-                # plt.scatter(x,y)
+                plt.title(i)
+                plt.scatter(x,y)
                 x_model = np.linspace(min(x), max(x), 20)
                 #print(x, x_model, min(x), max(x))
                 r = res_params['r']
-                # plt.plot(x_model, model(res_params, x_model), label=f'field: {field:.1f}, Rate: {r:.1f}')
+                plt.plot(x_model, model(res_params, x_model), label=f'field: {field:.1f}, Rate: {r:.1f}')
 
             
-            # plt.legend()
-            # plt.show()
+            plt.legend()
+            plt.savefig(f'{self.path_prefix}_{res1}_{atom_name1}_intensities.pdf')
+            plt.clf()
 
     def plot_relaxometry_coherences(self):
 
@@ -1913,7 +1936,7 @@ class AnalyseTrr():
     #     with open(fit_results_pickle_file, 'wb') as handle:
     #         pic.dump(emf_models, handle)
 
-    def fit_emf_correlation_to_md(self, atom_names, diffusion_file, time_max=20e-9, ignore_list=(), sv=True):
+    def fit_emf_correlation_to_md(self, atom_names, diffusion_file, time_max=20e-9, ignore_list=(), sv=False):
 
         atom_info = self.make_atom_pairs_list(atom_names)
         dval, diffusion_errors = utils.read_diffusion_tensor(diffusion_file)
@@ -1949,7 +1972,7 @@ class AnalyseTrr():
                 ex,ey,ez = self.cosine_angles[angles_key]
                 args = (x,ex,ey,ez)
 
-                model_params = mf.generate_mf_parameters(scale_diffusion=False, diffusion=dval)
+                model_params = mf.generate_mf_parameters(*dval, scale_diffusion=False, diffusion=dval)
                 c0, _, _ = correlation_functions.correlation_anisotropic_emf(model_params[0], args)
                 md_with_diff = y * c0
                 mod = model_params[-1]
