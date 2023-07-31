@@ -11,6 +11,8 @@ import data2ensembles.relaxation_matricies as relax_mat
 from timeit import default_timer as timer
 from datetime import timedelta
 
+import matplotlib
+import matplotlib.cm as cm
 import multiprocessing as mp
 import pickle as pic
 import re
@@ -55,20 +57,26 @@ class ModelFree():
     r2_path : str, None
         path to r2 data
 
-    hetnoe_path : str, None
-        path to hetronuclear NOE data
-
     r1_err_path : str, None
         path to r1 errors
 
     r2_err_path : str, None
         path to r2 errors
 
+    hetnoe_path : str, None
+        path to hetronuclear NOE data
+
     hetnoe_err_path : str, errors
         path to hetronuclear NOE data
 
     path_prefix : str 
         this is a prefix used for the output files
+
+    sigma_path : str, None
+        path to sigma NOE data
+
+    sigma_err_path : str, errors
+        path to sigma NOE data
 
     PhysQ : utils.PhysicalQuantities()
         This attribute is a class containing information about 
@@ -100,6 +108,9 @@ class ModelFree():
 
     load_low_field_info(file, distance_incrementing=0.5)
         this loads the low field information
+
+    load_sigma()
+        load the files containing sigma (reduced NOE)
 
     calc_cosine_angles_and_distances(atom_names, dist_skip=1)
         This calculates the cosine angles and distances from the reference structure
@@ -162,10 +173,19 @@ class ModelFree():
 
         self.r1_path = None
         self.r2_path = None 
-        self.hetnoe_path = None 
+
         self.r1_err_path = None
         self.r2_err_path = None 
+
+        self.hetnoe_path = None 
         self.hetnoe_err_path = None 
+
+        self.sigma_path = None 
+        self.sigma_err_path = None
+
+        self.relaxometry_mono_exponencial_fits_path = None
+        self.relaxometry_mono_exponencial_fits_err_path = None 
+
         self.path_prefix = 'model'
         self.PhysQ = PhysQ
 
@@ -173,7 +193,10 @@ class ModelFree():
         self.diffusion_tensor = None
         self.pdb = None
         self.high_fields = None
+        self.low_fields = None
+
         self.model_high_fields = None
+        self.model_all_fields = None
         self.spectral_density = specDens.J_anisotropic_emf
 
         self.scale_diffusion=False, 
@@ -216,6 +239,21 @@ class ModelFree():
         self.r1_err ,_ = utils.read_nmr_relaxation_rate(self.r1_err_path)
         self.r2_err ,_ = utils.read_nmr_relaxation_rate(self.r2_err_path)
         self.hetnoe_err ,_ = utils.read_nmr_relaxation_rate(self.hetnoe_err_path)
+
+        check = False
+        if self.relaxometry_mono_exponencial_fits_path != None:
+            if self.relaxometry_mono_exponencial_fits_err_path !=  None:
+                check=True
+
+        if check == True:
+            print('Loading monoexponencial fits of relaxometry decays')
+            self.relaxometry_mono_exp_fits, _ = utils.read_nmr_relaxation_rate(self.relaxometry_mono_exponencial_fits_path)
+            self.relaxometry_mono_exp_fits_err, _ = utils.read_nmr_relaxation_rate(self.relaxometry_mono_exponencial_fits_err_path)
+
+    def load_sigma(self,):
+
+        self.sigma, _ = utils.read_nmr_relaxation_rate(self.sigma_path)
+        self.sigma_err, _ = utils.read_nmr_relaxation_rate(self.sigma_err_path)
 
     def load_low_field_info(self, file, field_increment=0.5):
         '''
@@ -442,7 +480,41 @@ class ModelFree():
             x, model_r1, cosine_angles=angles)
 
         return model_r1, model_r2, model_noe
-    
+
+    def model_sigma(self, params,res_info, fields):
+        '''
+        Model for sigma (reduced NOE) NOTE: Here we have hard coded the C-H pair
+
+        Parameters
+        ----------
+        params : lmfit parameters class, dictionary
+            contains the parameters for the selected spectral density class 
+
+        res_info : list 
+            list containing the residue information
+
+        fields : ndarray 
+            contains the fields for the data stored in the R1,R2, and HetNOE files. 
+
+        Returns
+        -------
+        model_sigma : ndarray 
+            array of model sigma values
+
+        '''
+
+        resid, resname, atom1, atom2 = res_info
+        rxy = self.PhysQ.bondlengths[atom1, atom2]
+        csa_atom_name = (atom1, resname)
+        x = 'c'
+        angles = self.cosine_angles[(resid, atom1 , resid, atom2)]    
+
+        model_sigma = d2e.rates.r1_reduced_noe_YX(params, self.spectral_density, 
+            fields, rxy, x, y='h', cosine_angles=angles,)
+
+        return model_sigma
+
+
     def model_lf_single_field_intensities(self, params, low_field, res_info, protons):
         '''
         Model for fitting low field intensities
@@ -723,7 +795,7 @@ class ModelFree():
         lf_residual = self.residual_lf(params, low_fields, res_info, protons, intensities, intensity_errors)
         return np.concatenate([hf_residual, lf_residual])
 
-    def fit_single_residue(self, i):
+    def fit_single_residue(self, i, provided_diffusion=False, residual_type='hflf', model_select=True):
         '''
         This function fits all the models available in model free (set by generate_mf_parameters())
         and selects the best one based on the lowest BIC. 
@@ -732,18 +804,36 @@ class ModelFree():
         ----------
         i : str
             the residue tag
+        
+        provided_diffusion : bool, list, array
+            this argument is used to provide an alternative diffusion tensor to 
+            self.diffusion. If False self.diffusion is used otherwise a list like object 
+            [dx,dy,dz] is used. 
+
+        residual_type : str
+            determines which residual type is used. The residual can calculate only low field data
+            'lf', only high field data 'hf' or both 'hflf'.  
+
+        model_select : bool 
+            If True then the best model is selected based on the bic. If False all models are returned
+
         '''
         print(i)
         # get the atom info
         res_info = utils.get_atom_info_from_tag(i)
         resid, resname, atom1, atom2 = res_info
+        all_models = []
 
         # probably dont need a dictionary for the bic any more 
         bics = {} 
         bics[i] = 10e1000
 
         # the rows are Sf, Ss, tauf, taus, might be best to take this out and put it in its own function
-        dx,dy,dz = self.diffusion
+        if provided_diffusion == False:
+            dx,dy,dz = self.diffusion
+        else:
+            dx,dy,dz = provided_diffusion
+
         params_models = generate_mf_parameters(dx,dy,dz, scale_diffusion=self.scale_diffusion)
         
         for params in params_models:
@@ -752,36 +842,54 @@ class ModelFree():
             key = (resid, atom1 , resid, atom2)
             # args = (np.array([23,16])*self.PhysQ.gamma['c'],self.cosine_angles[key][0], self.cosine_angles[key][1], self.cosine_angles[key][2], )
             
-            hf_data = (self.r1[i], self.r2[i], self.hetnoe[i])
-            hf_errors = (self.r1_err[i], self.r2_err[i], self.hetnoe_err[i])
-            protons = ("H1'", "H2'", "H2''")
+            if 'hf' in residual_type:
+                hf_data = (self.r1[i], self.r2[i], self.hetnoe[i])
+                hf_errors = (self.r1_err[i], self.r2_err[i], self.hetnoe_err[i])
 
+            if 'lf' in residual_type:
+                protons = ("H1'", "H2'", "H2''")
+                low_fields = list(self.ShuttleTrajectory.experiment_info.keys())
+                intensities = []
+                intensity_errors = []
 
-            low_fields = list(self.ShuttleTrajectory.experiment_info.keys())
-            intensities = []
-            intensity_errors = []
+                for f in low_fields:
+                    intensities.append(self.low_field_intensities[f][i])
+                    intensity_errors.append(self.low_field_intensity_errors[f][i])
 
-            for f in low_fields:
-                intensities.append(self.low_field_intensities[f][i])
-                intensity_errors.append(self.low_field_intensity_errors[f][i])
+            if residual_type == 'hflf':
+                # do fit, here with the default leastsq algorithm
+                minner = Minimizer(self.residual_hflf, params, fcn_args=(hf_data, 
+                    hf_errors, res_info, low_fields, 
+                    protons,intensities, intensity_errors))
 
-            # do fit, here with the default leastsq algorithm
-            minner = Minimizer(self.residual_hflf, params, fcn_args=(hf_data, 
-                hf_errors, res_info, low_fields, 
-                protons,intensities, intensity_errors))
+            elif residual_type == 'hf':
+                # do fit, here with the default leastsq algorithm
+                fcn_args = (*hf_data, *hf_errors, res_info)
+                minner = Minimizer(self.residual_hf, params, fcn_args=(fcn_args))
+
+            elif residual_type == 'lf':
+                print('This has not been implimented yet ...')
+                os.exit()
+
+            else:
+                print('This residual_type is not recognised.')
 
             start_time = time.time()
             result = minner.minimize(method='powel')
             resdict = result.params.valuesdict()
             end_time = time.time()
             elapsed_time = end_time - start_time
-            #print("Elapsed time: ", elapsed_time) 
-            #report_fit(result)
+            all_models.append(result)
 
             if result.bic < bics[i]:
                 model = result
 
-        return (i, model)
+        if model_select == True:
+            return (i, model)
+
+        if model_select == False:
+            return (i, all_models)
+
 
     def per_residue_emf_fit(self, 
         lf_data_prefix='', 
@@ -822,6 +930,104 @@ class ModelFree():
         
         with open(self.fit_results_pickle_file, 'wb') as handle:
             pic.dump(models, handle)
+
+
+    def wrapper_global_residual(self, args):
+        i, current_diffusion, residual_type = args
+        
+        res = self.fit_single_residue(i, 
+            provided_diffusion=current_diffusion, 
+            residual_type=residual_type, 
+            model_select=False)
+        
+        return res
+
+    def global_emf_fit(self, 
+        lf_data_prefix='', 
+        lf_data_suffix='', 
+        select_only_some_models=False, 
+        cpu_count=-1, 
+        residual_type='hf'):
+
+        '''
+        This funtion fits a spectral density function to each residue using the
+        extended model free formalism. Since Each residue is treated individually
+        the diffusion tensor is held as fixed. 
+        '''
+
+        def global_residual(params, cpu_count):
+
+            # diffusion tensor
+            dx = params['dx'].value
+            dy = params['dy'].value
+            dz = params['dz'].value
+            current_diffusion = (dx,dy,dz)
+
+            #residue keys
+            c1p_keys = self.get_c1p_keys()
+            
+            # args for the wrapper 
+            args = [[i, current_diffusion, residual_type] for i in c1p_keys]
+
+            #store info
+            data = {}
+            models = {}
+            resids = []
+
+            #parallel part
+            if cpu_count <= 0 :
+                cpu_count = mp.cpu_count()
+
+            # do the calculation
+            start_time = time.time()
+            if cpu_count == 1:
+                for i in c1p_keys:
+                    res = self.wrapper_global_residual(args)
+                    models[res[0]] = res[1] 
+            else:
+
+                with mp.Pool(cpu_count) as pool:
+                    results = pool.map(self.wrapper_global_residual, args)
+
+                for i in results:
+                    models[i[0]] = i[1]
+
+            # blend the residuals for the models based on the aics
+            for i in models:
+                # get all the AICS
+                aics = [mod.aic for mod in models[i]]
+                min_aic = min(aics)
+
+                for mod in models[i]:
+                    #this 
+                    probability_of_min_info_loss = np.e**((min_aic-mod.aic)/2)
+                    weighted_residuals = probability_of_min_info_loss*mod.residual
+                    resids.append(weighted_residuals)
+
+            return np.array(resids)
+
+        # sanity check 
+        if self.scale_diffusion==True:
+            print('This will not work with self.scale_diffusion=True')
+            print('because we update the diffusion tensor in the outer and inner fits')
+
+        # set up the Parameters object
+        params = Parameters()
+        params.add('dx_fix',  min=0, value=self.diffusion[0], vary=False)
+        params.add('dy_fix',  min=0, value=self.diffusion[1], vary=False)
+        params.add('dz_fix',  min=0, value=self.diffusion[2], vary=False)
+
+        #scale the diffusion tensor by a single value 
+        params.add('diff_scale', min=0, value=1, vary=True)
+        params.add('dx',  expr='dx_fix*diff_scale')
+        params.add('dy',  expr='dy_fix*diff_scale')
+        params.add('dz',  expr='dz_fix*diff_scale')
+
+        args = [cpu_count]
+        minner = Minimizer(global_residual, params, fcn_args=args)
+        result = minner.minimize(method='powel')
+        report_fit(result)
+
 
     def print_final_residuals(self, pickle_path='default'):
 
@@ -941,7 +1147,6 @@ class ModelFree():
         noe_model = []
 
 
-
         for i in sorted_keys:
 
             res_info = model_resinfo[i]
@@ -1021,7 +1226,243 @@ class ModelFree():
         plt.tight_layout()
         plt.savefig(f"{atom_name}_rates.pdf")
         plt.close()
-    
+
+    def plot_sigma(self,atom_name, 
+        model_pic='model_free_parameters.pic', 
+        fields_min=14, 
+        fields_max=25, 
+        per_residue_prefix='sigma_rates'):
+
+        # load the model
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
+
+        sigma_array = []
+        sigma_array_error = []
+        sigma_model = []
+
+        for i in sorted_keys:
+
+            res_info = model_resinfo[i]
+            resid, resname, atom1, atom2 = res_info
+
+            tag = utils.resinto_to_tag(resid, resname, atom1, atom2)
+            model_sigma = self.model_sigma(models_resid[i].params,res_info, self.model_high_fields)
+            
+            fig, (ax0) = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
+            ax0.set_title(f'R1 {i}')
+            ax0.errorbar(self.high_fields, self.sigma[tag],yerr=self.sigma_err[tag], fmt='o')
+            ax0.plot(self.model_high_fields, model_sigma)
+            ax0.set_xlabel('field (T)')
+            ax0.set_ylabel('R_{1}(Hz)')
+
+            plt.tight_layout()
+            plt.savefig(f"{per_residue_prefix}_{atom_name}_{resid}.pdf")
+            plt.close()
+
+    def plot_relaxometry_intensities_together(self,
+        atom_name, protons,
+            model_pic='model_free_parameters.pic',
+            folder='relaxometry_intensities/', 
+            cmap='Blues', fancy=False):
+
+        if fancy == True:
+            plt.style.use(['science','nature'])
+
+        try:
+            os.mkdir(folder)
+        except FileExistsError:
+            pass 
+
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
+        low_fields = sorted(self.ShuttleTrajectory.experiment_info.keys())
+        print('plotting relaxometry_intensities')
+
+        norm = matplotlib.colors.Normalize(0, 10, clip=True)
+        mapper = cm.ScalarMappable(norm=norm, cmap=cmap)
+
+        for i in tqdm(sorted_keys):
+            tag = utils.resinto_to_tag(*model_resinfo[i])
+
+            for f in low_fields:
+
+                color = mapper.to_rgba(f)
+                delays =  self.ShuttleTrajectory.experiment_info[f]['delays']
+                intensities = self.low_field_intensities[f][tag]
+                intensity_errors = self.low_field_intensity_errors[f][tag]
+                
+                model = self.model_lf_single_field_intensities(models_resid[i].params, f, model_resinfo[i], protons)
+                model =  np.array([i[1] for i in model])
+                
+                factor = np.mean(intensities/model)
+
+                exp_intensity_scalled = intensities/factor
+                exp_error_scalled = intensity_errors/factor
+                plt.title(f'{tag}')
+
+                model = [x for _,x in sorted(zip(delays,model))]
+                model_delays = sorted(delays)
+                
+                plt.plot(model_delays, model, color=color,zorder=1)
+                plt.errorbar(delays, exp_intensity_scalled, yerr=exp_error_scalled,fmt='|', 
+                    c=color,zorder=2)
+                plt.scatter(delays, exp_intensity_scalled, color=color, label=f"{f:0.1f} T",edgecolor='black',zorder=3)
+            
+            plt.ylabel('Intensity')
+            plt.xlabel('delay (s)')
+            plt.legend()
+            plt.savefig(f'{folder}field_{tag}_together.pdf')
+            plt.close()
+
+    def plot_hf_relaxometry(self,
+        atom_name, protons,
+        fields_min=14, 
+        fields_max=25, 
+        plot_ranges=[[0,3.5], [10,35], [1, 1.9]], 
+        folder='folder',
+        model_pic='model_free_parameters.pic', 
+        fancy=False,
+        marker_size=15,
+        text_size = 10,
+        tick_size=8, 
+        cmap='Blues'):
+
+        if fancy == True:
+            plt.style.use(['science','nature'])
+
+
+        try:
+            os.mkdir(folder)
+        except FileExistsError:
+            pass 
+
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
+        low_fields = sorted(self.ShuttleTrajectory.experiment_info.keys())
+        print('plotting relaxometry_intensities')
+
+        norm = matplotlib.colors.Normalize(0, 10, clip=True)
+        mapper = cm.ScalarMappable(norm=norm, cmap=cmap)
+
+        for i in tqdm(sorted_keys):
+
+            tag = utils.resinto_to_tag(*model_resinfo[i])
+            res_info = model_resinfo[i]
+            model_r1, model_r2, model_noe = self.model_hf(models_resid[i].params,res_info, self.model_high_fields)
+            model_r1_v2, model_r2_v2, model_noe_v2 = self.model_hf(models_resid[i].params,res_info, self.high_fields)
+
+            fig, (ax0, ax1, ax2,ax3) = plt.subplots(nrows=1, ncols=4, figsize=(16*0.66, 4*0.66))
+            #ax0.set_title('$R_{1}$')
+            ax0.errorbar(self.high_fields, self.r1[tag],yerr=self.r1_err[tag], fmt='|', zorder=2)
+            ax0.scatter(self.high_fields, self.r1[tag], edgecolor='black', zorder=3, s=marker_size)
+            ax0.plot(self.model_high_fields, model_r1, zorder=1)
+            ax0.set_ylim(*plot_ranges[0])
+            ax0.set_xlabel('Field (T)', fontsize=text_size)
+            ax0.set_ylabel('$R_{1}$ (Hz)', fontsize=text_size)
+            ax0.tick_params(axis='both', labelsize=tick_size)
+
+            #ax1.set_title('$R_{2}$')
+            ax1.errorbar(self.high_fields, self.r2[tag],yerr=self.r2_err[tag], fmt='|', zorder=2,)
+            ax1.scatter(self.high_fields, self.r2[tag], edgecolor='black', zorder=3, s=marker_size)
+            ax1.plot(self.model_high_fields, model_r2, zorder=1)
+            ax1.set_ylim(*plot_ranges[1])
+            ax1.set_xlabel('Field (T)', fontsize=text_size)
+            ax1.set_ylabel('$R_{2}$ (Hz)', fontsize=text_size)
+            ax1.tick_params(axis='both', labelsize=tick_size)
+
+            #ax2.set_title('$I_{sat}/I_{0}$')
+            ax2.errorbar(self.high_fields, self.hetnoe[tag],yerr=self.hetnoe_err[tag], fmt='|', zorder=2)
+            ax2.scatter(self.high_fields, self.hetnoe[tag], edgecolor='black', zorder=3, s=marker_size)
+            ax2.plot(self.model_high_fields, model_noe, zorder=1)
+            ax2.set_ylim(*plot_ranges[2])
+            ax2.set_ylabel('$I_{sat}/I_{0}$', fontsize=text_size)
+            ax2.set_xlabel('Field (T)', fontsize=text_size)
+            ax2.tick_params(axis='both', labelsize=tick_size)
+
+
+            for f in low_fields:
+
+                # high field part 
+
+
+                color = mapper.to_rgba(f)
+                delays =  self.ShuttleTrajectory.experiment_info[f]['delays']
+                intensities = self.low_field_intensities[f][tag]
+                intensity_errors = self.low_field_intensity_errors[f][tag]
+                
+                model = self.model_lf_single_field_intensities(models_resid[i].params, f, model_resinfo[i], protons)
+                model =  np.array([i[1] for i in model])
+                
+                factor = np.mean(intensities/model)
+
+                exp_intensity_scalled = intensities/factor
+                exp_error_scalled = intensity_errors/factor
+
+                model = [x for _,x in sorted(zip(delays,model))]
+                model_delays = sorted(delays)
+                
+                ax3.plot(model_delays, model, color=color,zorder=1)
+                ax3.errorbar(delays, exp_intensity_scalled, yerr=exp_error_scalled,fmt='|', c=color,zorder=2)
+                ax3.scatter(delays, exp_intensity_scalled, color=color, label=f"{f:0.1f} T",edgecolor='black',zorder=3, s=marker_size)
+
+            #ax3.set_title('$Relaxometry$')
+            ax3.set_ylabel('Intensity', fontsize=text_size)
+            ax3.set_xlabel('delay (s)', fontsize=text_size)
+            ax3.legend(fontsize=tick_size)
+            ax3.tick_params(axis='both', labelsize=tick_size)
+            plt.tight_layout()
+            plt.savefig(f'{folder}_{tag}_together.pdf')
+            plt.close()
+
+    def plot_relaxometry_rates(self,
+        atom_name,
+        folder='relaxometry_plots',
+        model_pic='model_free_parameters.pic', 
+        fancy=False,
+        marker_size=15,
+        text_size = 10,
+        tick_size=8):
+
+        if fancy == True:
+            plt.style.use(['science','nature'])
+
+        try:
+            os.mkdir(folder)
+        except FileExistsError:
+            pass 
+
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
+        low_fields = sorted(self.ShuttleTrajectory.experiment_info.keys())
+        print('plotting relaxometry_intensities')
+
+        for i in tqdm(sorted_keys):
+
+            tag = utils.resinto_to_tag(*model_resinfo[i])
+            res_info = model_resinfo[i]
+            model_r1, model_r2, model_noe = self.model_hf(models_resid[i].params,res_info, self.model_all_fields)
+            
+            fig, (ax0) = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
+
+            ax0.plot(self.model_all_fields, model_r1, zorder=1, c='C2', label='Simulated $R_1$')
+            values = self.relaxometry_mono_exp_fits[tag]
+            err = self.relaxometry_mono_exp_fits_err[tag]
+
+            ax0.set_title(tag)
+            ax0.errorbar(self.low_fields, values,yerr=err, fmt='|', zorder=2, c='C1')
+            ax0.scatter(self.low_fields, values, edgecolor='black', zorder=3, s=marker_size, c='C1', label='Low field $R_{1}^{apparent}$')
+
+            ax0.errorbar(self.high_fields, self.r1[tag],yerr=self.r1_err[tag], fmt='|', zorder=2)
+            ax0.scatter(self.high_fields, self.r1[tag], edgecolor='black', zorder=3, s=marker_size, c='C3', label='High Field $R_1$')
+
+            ax0.set_xlabel('Field (T)', fontsize=text_size)
+            ax0.set_ylabel('$R_{1}$ (Hz)', fontsize=text_size)
+            ax0.tick_params(axis='both', labelsize=tick_size)
+            ax0.set_xscale('log')
+            ax0.set_xlim(1, 25)
+            ax0.legend()
+
+            plt.tight_layout()
+            plt.savefig(f'{folder}_{tag}_together.pdf')
+            plt.close()
+
     def plot_relaxometry_intensities(self,atom_name, protons,model_pic='model_free_parameters.pic',folder='relaxometry_intensities/'):
 
         try:
@@ -1031,6 +1472,7 @@ class ModelFree():
 
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
         low_fields = self.ShuttleTrajectory.experiment_info.keys()
+        
         print('plotting relaxometry_intensities')
         for i in tqdm(sorted_keys):
             tag = utils.resinto_to_tag(*model_resinfo[i])
@@ -1082,7 +1524,7 @@ def generate_mf_parameters(dx,dy,dz,scale_diffusion=False, diffusion=None):
         params = Parameters()
         #internal dynamics 
         if mod[3] == True:
-            params.add('tau_s', value=0.5e-9, vary=True, max=15e-9, min=10e-12)
+            params.add('tau_s', value=0.5e-9, vary=True, max=15e-9, min=500e-12)
         else:
             params.add('tau_s', value=mod[3], vary=False, min=10e-12)
 
@@ -1093,7 +1535,7 @@ def generate_mf_parameters(dx,dy,dz,scale_diffusion=False, diffusion=None):
 
         # add a constraint on the diffeerence between tauf and taus
         if mod[2] == True:
-            params.add('tau_f', value=100e-12, min=40e-12, vary=True,max=1e-9)
+            params.add('tau_f', value=100e-12, min=40e-12, vary=True,max=500e-12)
         else: 
             params.add('tau_f', value=mod[2], vary=False)    
 
