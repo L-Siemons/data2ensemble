@@ -330,7 +330,7 @@ def r1_reduced_noe_YX(params,
     '''
 
     dd_prefactor = (PhysQ.calc_dd(x,y,rxy)**2)/4
-    gammas = PhysQ.gamma[y]/PhysQ.gamma[x]
+    #gammas = PhysQ.gamma[y]/PhysQ.gamma[x]
     omega_x = PhysQ.calc_omega(x, fields)
     omega_y = PhysQ.calc_omega(y, fields)
 
