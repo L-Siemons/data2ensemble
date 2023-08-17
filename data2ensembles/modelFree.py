@@ -35,7 +35,7 @@ import sys
 PhysQ = utils.PhysicalQuantities()
 
 
-print(data2ensembles.rates.__file__)
+#print(data2ensembles.rates.__file__)
 
 class ModelFree():
     """This class impliments model free calculations
@@ -890,12 +890,20 @@ class ModelFree():
         if model_select == False:
             return (i, all_models)
 
+    def wrapper_fit_single_residue(self, args):
+        args, kwargs = args
+        #print('args', args)
+        #print('kwargs', kwargs)
+        res = self.fit_single_residue(args,**kwargs)
+        return res
+
 
     def per_residue_emf_fit(self, 
         lf_data_prefix='', 
         lf_data_suffix='', 
         select_only_some_models=False, 
-        cpu_count=-1):
+        cpu_count=-1, 
+        residual_type='hflf'):
 
         '''
         This funtion fits a spectral density function to each residue using the
@@ -903,22 +911,30 @@ class ModelFree():
         the diffusion tensor is held as fixed. 
         '''
 
-        c1p_keys = self.get_c1p_keys()
         data = {}
         models = {}
 
         if cpu_count <= 0 :
             cpu_count = mp.cpu_count()
 
+        args = self.get_c1p_keys()
+        kwargs = {}
+        kwargs['residual_type'] = residual_type
+        total_args = [(i, kwargs) for i in args]
+
+        # for i in total_args:
+        #     print(i)
+
+
         start_time = time.time()
         if cpu_count == 1:
-            for i in c1p_keys:
-                res = self.fit_single_residue(i)
+            for i in total_args:
+                res = self.wrapper_fit_single_residue(i)
                 models[res[0]] = res[1] 
         else:
 
             with mp.Pool(cpu_count) as pool:
-                results = pool.map(self.fit_single_residue, c1p_keys)
+                results = pool.map(self.wrapper_fit_single_residue, total_args)
 
             for i in results:
                 models[i[0]] = i[1]
@@ -935,6 +951,7 @@ class ModelFree():
     def wrapper_global_residual(self, args):
         i, current_diffusion, residual_type = args
         
+        # could probably re-write this with *args and **kwargs if needed
         res = self.fit_single_residue(i, 
             provided_diffusion=current_diffusion, 
             residual_type=residual_type, 
@@ -998,11 +1015,19 @@ class ModelFree():
                 aics = [mod.aic for mod in models[i]]
                 min_aic = min(aics)
 
+                # simpler seleciton of the models - is it better ? Not sure
+                best_aic = 10e10
                 for mod in models[i]:
-                    #this 
-                    probability_of_min_info_loss = np.e**((min_aic-mod.aic)/2)
-                    weighted_residuals = probability_of_min_info_loss*mod.residual
-                    resids.append(weighted_residuals)
+                    # get all the AICS
+                    if mod.bic < best_aic:
+                        best_aic = mod.aic
+                        current_resids = mod.residual
+
+                resids.append(current_resids)
+                    
+                    # probability_of_min_info_loss = np.e**((min_aic-mod.aic)/2)
+                    # weighted_residuals = probability_of_min_info_loss*mod.residual
+                    # resids.append(weighted_residuals)
 
             return np.array(resids)
 
@@ -1535,7 +1560,7 @@ def generate_mf_parameters(dx,dy,dz,scale_diffusion=False, diffusion=None):
             if mod[3] == True:
                 params.add('tau_f', value=100e-12, min=40e-12, vary=True,max=500e-12)
                 #this should ensure that tauf is 5 times smaller than taus 
-                params.add('diff', min=0, expr='tau_s-tau_f')
+                params.add('diff', min=0, expr='tau_s-5*tau_f')
             else:
                 params.add('tau_f', value=0, vary=False)
 
