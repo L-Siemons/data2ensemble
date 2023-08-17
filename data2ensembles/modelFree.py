@@ -24,6 +24,7 @@ from tqdm import tqdm
 import glob
 import time
 import math 
+import itertools
 
 from lmfit import Minimizer, Parameters, report_fit
 from tqdm import tqdm
@@ -35,7 +36,7 @@ import sys
 PhysQ = utils.PhysicalQuantities()
 
 
-print(data2ensembles.rates.__file__)
+#print(data2ensembles.rates.__file__)
 
 class ModelFree():
     """This class impliments model free calculations
@@ -282,6 +283,7 @@ class ModelFree():
         This function defines the attributes: 
         self.cosine_angles
         self.distances
+        self.uni 
 
         Parameters
         ----------
@@ -312,6 +314,7 @@ class ModelFree():
 
         self.cosine_angles = structure_analysis.cosine_angles
         self.distances = structure_analysis.md_distances
+        self.uni = structure_analysis.uni
 
     def residual_to_chi2(self,a):
         '''
@@ -439,6 +442,41 @@ class ModelFree():
         sorted_keys = sorted(list(models_resid.keys()))
         return models, models_resid, sorted_keys, model_resinfo
 
+    def filter_atoms(self, resid, atoms, print_out=False):
+        '''
+        removes the atoms that are not present in the residue
+        
+        Parameters
+        ----------
+        resid : int 
+            residue ID 
+
+        atoms : list
+            list of atom names we want to check
+
+        print_out : bool 
+            controls a printout for debugging
+
+        Returns
+        -------
+        atoms_filtered : list 
+            the list of atoms present in the residue
+        '''
+
+        atoms_filtered = []
+        for i in atoms:
+            sele = self.uni.select_atoms(f'resid {resid} and name {i}')
+
+            if len(sele) != 0:
+                atoms_filtered.append(i)
+            
+            elif print_out == True:
+                test_sele = self.uni.select_atoms(f'resid {resid}')
+                print(f' atom {i} is missing', test_sele[0].resname)
+
+        return atoms_filtered
+
+
     def model_hf(self, params,res_info, fields):
         '''
         Model for fitting high field R1, R2 and hetro nuclear NOE
@@ -540,7 +578,6 @@ class ModelFree():
 
         '''
         time_dict = {}
-
         resid, restype, x_spin, y_spin = res_info
         traj = self.ShuttleTrajectory.trajectory_time_at_fields[low_field]
         
@@ -690,8 +727,9 @@ class ModelFree():
         noe_diff = self.subtracts_and_divide_by_error(hetnoe, model_noe,noe_err)
         constraint = 0
 
-        if params['tau_s'] < params['tau_f']:
-            constraint = (params['tau_s'] - params['tau_f'])*1e12
+        # if params['tau_s'] < params['tau_f']:
+        #     constraint = (params['tau_s'] - params['tau_f'])*1e12
+        # print("model:", model_r1, model_r2, model_noe)
 
         return np.concatenate([r1_diff.flatten(), r2_diff.flatten(), noe_diff.flatten(), [constraint]])
 
@@ -795,7 +833,7 @@ class ModelFree():
         lf_residual = self.residual_lf(params, low_fields, res_info, protons, intensities, intensity_errors)
         return np.concatenate([hf_residual, lf_residual])
 
-    def fit_single_residue(self, i, provided_diffusion=False, residual_type='hflf', model_select=True):
+    def fit_single_residue(self, i,protons=(), provided_diffusion=False, residual_type='hflf', model_select=True):
         '''
         This function fits all the models available in model free (set by generate_mf_parameters())
         and selects the best one based on the lowest BIC. 
@@ -804,7 +842,11 @@ class ModelFree():
         ----------
         i : str
             the residue tag
-        
+
+        protons : tupple 
+            This is a tupple of the protons you want to include in the relaxation analyis
+            of the low field data. This only needs to be given when analysing low field data 
+
         provided_diffusion : bool, list, array
             this argument is used to provide an alternative diffusion tensor to 
             self.diffusion. If False self.diffusion is used otherwise a list like object 
@@ -834,6 +876,9 @@ class ModelFree():
         else:
             dx,dy,dz = provided_diffusion
 
+        # remove the protons not in the residue 
+        # protons = self.filter_atoms(resid, protons)
+
         params_models = generate_mf_parameters(dx,dy,dz, scale_diffusion=self.scale_diffusion)
         
         for params in params_models:
@@ -847,7 +892,11 @@ class ModelFree():
                 hf_errors = (self.r1_err[i], self.r2_err[i], self.hetnoe_err[i])
 
             if 'lf' in residual_type:
-                protons = ("H1'", "H2'", "H2''")
+                if protons == ():
+                    print("WARNING there are no protons! exiting - sorry !")
+                    os.exit() 
+                
+                # protons = ("H1'", "H2'", "H2''")
                 low_fields = list(self.ShuttleTrajectory.experiment_info.keys())
                 intensities = []
                 intensity_errors = []
@@ -890,12 +939,21 @@ class ModelFree():
         if model_select == False:
             return (i, all_models)
 
+    def wrapper_fit_single_residue(self, args):
+        args, kwargs = args
+        #print('args', args)
+        #print('kwargs', kwargs)
+        res = self.fit_single_residue(args,**kwargs)
+        return res
+
 
     def per_residue_emf_fit(self, 
         lf_data_prefix='', 
         lf_data_suffix='', 
         select_only_some_models=False, 
-        cpu_count=-1):
+        cpu_count=-1, 
+        protons=(),
+        residual_type='hflf'):
 
         '''
         This funtion fits a spectral density function to each residue using the
@@ -910,15 +968,23 @@ class ModelFree():
         if cpu_count <= 0 :
             cpu_count = mp.cpu_count()
 
+
+        args = c1p_keys
+        kwargs = {}
+        kwargs['protons'] = protons
+        kwargs['residual_type'] = residual_type
+        total_args = [(i, kwargs) for i in args]
+
+        #print(total_args)
         start_time = time.time()
         if cpu_count == 1:
-            for i in c1p_keys:
-                res = self.fit_single_residue(i)
+            for i in total_args:
+                res = self.wrapper_fit_single_residue(i)
                 models[res[0]] = res[1] 
         else:
 
             with mp.Pool(cpu_count) as pool:
-                results = pool.map(self.fit_single_residue, c1p_keys)
+                results = pool.map(self.wrapper_fit_single_residue, total_args)
 
             for i in results:
                 models[i[0]] = i[1]
@@ -933,13 +999,15 @@ class ModelFree():
 
 
     def wrapper_global_residual(self, args):
+        
         i, current_diffusion, residual_type = args
+        #print('in wrapper args', args)
         
         res = self.fit_single_residue(i, 
             provided_diffusion=current_diffusion, 
             residual_type=residual_type, 
             model_select=False)
-        
+
         return res
 
     def global_emf_fit(self, 
@@ -967,8 +1035,9 @@ class ModelFree():
             c1p_keys = self.get_c1p_keys()
             
             # args for the wrapper 
-            args = [[i, current_diffusion, residual_type] for i in c1p_keys]
 
+            args = [[i, current_diffusion, residual_type] for i in c1p_keys]
+            #print('argsa', args[0])
             #store info
             data = {}
             models = {}
@@ -981,28 +1050,38 @@ class ModelFree():
             # do the calculation
             start_time = time.time()
             if cpu_count == 1:
-                for i in c1p_keys:
-                    res = self.wrapper_global_residual(args)
+                for i in args:
+                    res = self.wrapper_global_residual(i)
                     models[res[0]] = res[1] 
             else:
 
                 with mp.Pool(cpu_count) as pool:
+                    #print('im here', cpu_count)
                     results = pool.map(self.wrapper_global_residual, args)
 
                 for i in results:
                     models[i[0]] = i[1]
 
             # blend the residuals for the models based on the aics
+            best_aic = 10e100
+
+            # take the residuals of the best model
             for i in models:
                 # get all the AICS
-                aics = [mod.aic for mod in models[i]]
-                min_aic = min(aics)
-
                 for mod in models[i]:
-                    #this 
-                    probability_of_min_info_loss = np.e**((min_aic-mod.aic)/2)
-                    weighted_residuals = probability_of_min_info_loss*mod.residual
-                    resids.append(weighted_residuals)
+                    if mod.bic < best_aic:
+                        best_aic = mod.aic
+                        current_resids = mod.residual
+                resids.append(current_resids)
+
+                # aics = [mod.aic for mod in models[i]]
+                # min_aic = min(aics)
+
+                # for mod in models[i]:
+                #     #this 
+                #     probability_of_min_info_loss = np.e**((min_aic-mod.aic)/2)
+                #     weighted_residuals = probability_of_min_info_loss*mod.residual
+                #     resids.append(weighted_residuals)
 
             return np.array(resids)
 
@@ -1013,6 +1092,7 @@ class ModelFree():
 
         # set up the Parameters object
         params = Parameters()
+        print(self.diffusion)
         params.add('dx_fix',  min=0, value=self.diffusion[0], vary=False)
         params.add('dy_fix',  min=0, value=self.diffusion[1], vary=False)
         params.add('dz_fix',  min=0, value=self.diffusion[2], vary=False)
@@ -1024,6 +1104,7 @@ class ModelFree():
         params.add('dz',  expr='dz_fix*diff_scale')
 
         args = [cpu_count]
+        print(params)
         minner = Minimizer(global_residual, params, fcn_args=args)
         result = minner.minimize(method='powel')
         report_fit(result)
@@ -1499,71 +1580,61 @@ class ModelFree():
                 plt.close()
 
 def generate_mf_parameters(dx,dy,dz,scale_diffusion=False, diffusion=None):
-    if scale_diffusion == False:
-        models_state = [[True, 1, 0, 0, False],
-                  [True, 1, True, 0, False], 
-                  [1, True, 0, True, False], 
-                  [True, True, 0, True, False],
-                  [True, True, True, True, False]]
 
-    if scale_diffusion == True:
-        models_state = [[True, 1, 0, 0, False],
-                  [True, 1, True, 0, False], 
-                  [1, True, 0, True, False], 
-                  [True, True, 0, True, False],
-                  [True, True, True, True, False],
-                  [True, 1, 0, 0, False],
-                  [True, 1, True, 0, True], 
-                  [1, True, 0, True, True], 
-                  [True, True, 0, True, True],
-                  [True, True, True, True, True]]
-    
+
+    # models 
+
+
+    models_state = [[True, True,  False, False],
+                    [True, True,  True,  False],
+                    [True, True,  True,  True],]
+
     params_lists = []
-    for mod in models_state:
+    if scale_diffusion == False:
+        fit_diff = [False]
+    elif scale_diffusion == True:
+        fit_diff = [False, True]
 
-        params = Parameters()
-        #internal dynamics 
-        if mod[3] == True:
-            params.add('tau_s', value=0.5e-9, vary=True, max=15e-9, min=500e-12)
-        else:
-            params.add('tau_s', value=mod[3], vary=False, min=10e-12)
+    for i in fit_diff:
+        for mod in models_state:
+            params = Parameters()
 
-        if mod[1] == True:
-            params.add('Ss', value=0.8, min=0.4, vary=True, max=1)
-        else:
-            params.add('Ss', value=mod[1], vary=False,)
+            if mod[0] == True:
+                params.add('Ss', value=1., min=0.4, max=1., vary=True)
 
-        # add a constraint on the diffeerence between tauf and taus
-        if mod[2] == True:
-            params.add('tau_f', value=100e-12, min=40e-12, vary=True,max=500e-12)
-        else: 
-            params.add('tau_f', value=mod[2], vary=False)    
+            if mod[1] == True:
+                params.add('tau_s', value=0.5e-9, vary=True, max=15e-9, min=500e-12)
+            else:
+                params.add('tau_s', value=0, vary=False)
 
-        #Sf 
-        if mod[0] == True:
-            params.add('Sf', value=0.9, min=0.4, vary=True, max=1)
-        else:
-            params.add('Sf', value=mod[0], vary=False,)
+            if mod[2] == True:
+                params.add('Sf', value=0.9, min=0.4, vary=True, max=1)
+            else:
+                params.add('Sf', value=0, vary=False)
 
-        params.add('diff', min=0, expr='tau_s-tau_f*5')
 
-        #diffusion
+            if mod[3] == True:
+                params.add('tau_f', value=100e-12, min=40e-12, vary=True,max=500e-12)
+                #this should ensure that tauf is 5 times smaller than taus 
+                params.add('diff', min=0, expr='tau_s-tau_f')
+            else:
+                params.add('tau_f', value=0, vary=False)
 
-        if diffusion == None:
-            params.add('dx_fix',  min=0, value=dx, vary=False)
-            params.add('dy_fix',  min=0, value=dy, vary=False)
-            params.add('dz_fix',  min=0, value=dz, vary=False)
-            params.add('diff_scale', min=0, value=1, vary=mod[4])
+            if diffusion == None:
+                params.add('dx_fix',  min=0, value=dx, vary=False)
+                params.add('dy_fix',  min=0, value=dy, vary=False)
+                params.add('dz_fix',  min=0, value=dz, vary=False)
+                params.add('diff_scale', min=0, value=1, vary=i)
 
-        else:
-            params.add('dx_fix',  min=0, value=diffusion[0], vary=False)
-            params.add('dy_fix',  min=0, value=diffusion[1], vary=False)
-            params.add('dz_fix',  min=0, value=diffusion[2], vary=False)
-            params.add('diff_scale', min=0, value=1, vary=mod[4])
+            else:
+                params.add('dx_fix',  min=0, value=diffusion[0], vary=False)
+                params.add('dy_fix',  min=0, value=diffusion[1], vary=False)
+                params.add('dz_fix',  min=0, value=diffusion[2], vary=False)
+                params.add('diff_scale', min=0, value=1, vary=i)
 
-        params.add('dx',  expr='dx_fix*diff_scale')
-        params.add('dy',  expr='dy_fix*diff_scale')
-        params.add('dz',  expr='dz_fix*diff_scale')
-        params_lists.append(params)
+            params.add('dx',  expr='dx_fix*diff_scale')
+            params.add('dy',  expr='dy_fix*diff_scale')
+            params.add('dz',  expr='dz_fix*diff_scale')
+            params_lists.append(params)
 
     return params_lists
