@@ -1499,71 +1499,132 @@ class ModelFree():
                 plt.close()
 
 def generate_mf_parameters(dx,dy,dz,scale_diffusion=False, diffusion=None):
-    if scale_diffusion == False:
-        models_state = [[True, 1, 0, 0, False],
-                  [True, 1, True, 0, False], 
-                  [1, True, 0, True, False], 
-                  [True, True, 0, True, False],
-                  [True, True, True, True, False]]
 
-    if scale_diffusion == True:
-        models_state = [[True, 1, 0, 0, False],
-                  [True, 1, True, 0, False], 
-                  [1, True, 0, True, False], 
-                  [True, True, 0, True, False],
-                  [True, True, True, True, False],
-                  [True, 1, 0, 0, False],
-                  [True, 1, True, 0, True], 
-                  [1, True, 0, True, True], 
-                  [True, True, 0, True, True],
-                  [True, True, True, True, True]]
-    
+
+    # models 
+
+
+    models_state = [[True, True,  False, False],
+                    [True, True,  True,  False],
+                    [True, True,  True,  True],]
+
     params_lists = []
-    for mod in models_state:
+    if scale_diffusion == False:
+        fit_diff = [False]
+    elif scale_diffusion == True:
+        fit_diff = [False, True]
 
-        params = Parameters()
-        #internal dynamics 
-        if mod[3] == True:
-            params.add('tau_s', value=0.5e-9, vary=True, max=15e-9, min=500e-12)
-        else:
-            params.add('tau_s', value=mod[3], vary=False, min=10e-12)
+    for i in fit_diff:
+        for mod in models_state:
+            params = Parameters()
 
-        if mod[1] == True:
-            params.add('Ss', value=0.8, min=0.4, vary=True, max=1)
-        else:
-            params.add('Ss', value=mod[1], vary=False,)
+            if mod[0] == True:
+                params.add('Ss', value=1., min=0.4, max=1., vary=True)
 
-        # add a constraint on the diffeerence between tauf and taus
-        if mod[2] == True:
-            params.add('tau_f', value=100e-12, min=40e-12, vary=True,max=500e-12)
-        else: 
-            params.add('tau_f', value=mod[2], vary=False)    
+            if mod[1] == True:
+                params.add('tau_s', value=0.5e-9, vary=True, max=15e-9, min=500e-12)
+            else:
+                params.add('tau_s', value=0, vary=False)
 
-        #Sf 
-        if mod[0] == True:
-            params.add('Sf', value=0.9, min=0.4, vary=True, max=1)
-        else:
-            params.add('Sf', value=mod[0], vary=False,)
+            if mod[2] == True:
+                params.add('Sf', value=0.9, min=0.4, vary=True, max=1)
+            else:
+                params.add('Sf', value=0, vary=False)
 
-        params.add('diff', min=0, expr='tau_s-tau_f*5')
 
-        #diffusion
+            if mod[3] == True:
+                params.add('tau_f', value=100e-12, min=40e-12, vary=True,max=500e-12)
+                #this should ensure that tauf is 5 times smaller than taus 
+                params.add('diff', min=0, expr='tau_s-tau_f')
+            else:
+                params.add('tau_f', value=0, vary=False)
 
-        if diffusion == None:
-            params.add('dx_fix',  min=0, value=dx, vary=False)
-            params.add('dy_fix',  min=0, value=dy, vary=False)
-            params.add('dz_fix',  min=0, value=dz, vary=False)
-            params.add('diff_scale', min=0, value=1, vary=mod[4])
+            if diffusion == None:
+                params.add('dx_fix',  min=0, value=dx, vary=False)
+                params.add('dy_fix',  min=0, value=dy, vary=False)
+                params.add('dz_fix',  min=0, value=dz, vary=False)
+                params.add('diff_scale', min=0, value=1, vary=i)
 
-        else:
-            params.add('dx_fix',  min=0, value=diffusion[0], vary=False)
-            params.add('dy_fix',  min=0, value=diffusion[1], vary=False)
-            params.add('dz_fix',  min=0, value=diffusion[2], vary=False)
-            params.add('diff_scale', min=0, value=1, vary=mod[4])
+            else:
+                params.add('dx_fix',  min=0, value=diffusion[0], vary=False)
+                params.add('dy_fix',  min=0, value=diffusion[1], vary=False)
+                params.add('dz_fix',  min=0, value=diffusion[2], vary=False)
+                params.add('diff_scale', min=0, value=1, vary=i)
 
-        params.add('dx',  expr='dx_fix*diff_scale')
-        params.add('dy',  expr='dy_fix*diff_scale')
-        params.add('dz',  expr='dz_fix*diff_scale')
-        params_lists.append(params)
+            params.add('dx',  expr='dx_fix*diff_scale')
+            params.add('dy',  expr='dy_fix*diff_scale')
+            params.add('dz',  expr='dz_fix*diff_scale')
+            params_lists.append(params)
 
     return params_lists
+
+
+# def generate_mf_parameters(dx,dy,dz,scale_diffusion=False, diffusion=None):
+#     if scale_diffusion == False:
+#         models_state = [[True, 1, 0, 0, False],
+#                   [True, 1, True, 0, False], 
+#                   [1, True, 0, True, False], 
+#                   [True, True, 0, True, False],
+#                   [True, True, True, True, False]]
+
+#     if scale_diffusion == True:
+#         models_state = [[True, 1, 0, 0, False],
+#                   [True, 1, True, 0, False], 
+#                   [1, True, 0, True, False], 
+#                   [True, True, 0, True, False],
+#                   [True, True, True, True, False],
+#                   [True, 1, 0, 0, False],
+#                   [True, 1, True, 0, True], 
+#                   [1, True, 0, True, True], 
+#                   [True, True, 0, True, True],
+#                   [True, True, True, True, True]]
+    
+#     params_lists = []
+#     for mod in models_state:
+
+#         params = Parameters()
+#         #internal dynamics 
+#         if mod[3] == True:
+#             params.add('tau_s', value=0.5e-9, vary=True, max=15e-9, min=500e-12)
+#         else:
+#             params.add('tau_s', value=mod[3], vary=False, min=10e-12)
+
+#         if mod[1] == True:
+#             params.add('Ss', value=0.8, min=0.4, vary=True, max=1)
+#         else:
+#             params.add('Ss', value=mod[1], vary=False,)
+
+#         # add a constraint on the diffeerence between tauf and taus
+#         if mod[2] == True:
+#             params.add('tau_f', value=100e-12, min=40e-12, vary=True,max=500e-12)
+#         else: 
+#             params.add('tau_f', value=mod[2], vary=False)    
+
+#         #Sf 
+#         if mod[0] == True:
+#             params.add('Sf', value=0.9, min=0.4, vary=True, max=1)
+#         else:
+#             params.add('Sf', value=mod[0], vary=False,)
+
+#         params.add('diff', min=0, expr='tau_s-tau_f*5')
+
+#         #diffusion
+
+#         if diffusion == None:
+#             params.add('dx_fix',  min=0, value=dx, vary=False)
+#             params.add('dy_fix',  min=0, value=dy, vary=False)
+#             params.add('dz_fix',  min=0, value=dz, vary=False)
+#             params.add('diff_scale', min=0, value=1, vary=mod[4])
+
+#         else:
+#             params.add('dx_fix',  min=0, value=diffusion[0], vary=False)
+#             params.add('dy_fix',  min=0, value=diffusion[1], vary=False)
+#             params.add('dz_fix',  min=0, value=diffusion[2], vary=False)
+#             params.add('diff_scale', min=0, value=1, vary=mod[4])
+
+#         params.add('dx',  expr='dx_fix*diff_scale')
+#         params.add('dy',  expr='dy_fix*diff_scale')
+#         params.add('dz',  expr='dz_fix*diff_scale')
+#         params_lists.append(params)
+
+#     return params_lists
