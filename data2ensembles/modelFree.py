@@ -245,10 +245,10 @@ class ModelFree():
             if self.relaxometry_mono_exponencial_fits_err_path !=  None:
                 check=True
 
-        if check == True:
-            print('Loading monoexponencial fits of relaxometry decays')
-            self.relaxometry_mono_exp_fits, _ = utils.read_nmr_relaxation_rate(self.relaxometry_mono_exponencial_fits_path)
-            self.relaxometry_mono_exp_fits_err, _ = utils.read_nmr_relaxation_rate(self.relaxometry_mono_exponencial_fits_err_path)
+        # if check == True:
+        #     print('Loading monoexponencial fits of relaxometry decays')
+        #     self.relaxometry_mono_exp_fits, _ = utils.read_nmr_relaxation_rate(self.relaxometry_mono_exponencial_fits_path)
+        #     self.relaxometry_mono_exp_fits_err, _ = utils.read_nmr_relaxation_rate(self.relaxometry_mono_exponencial_fits_err_path)
 
     def load_sigma(self,):
 
@@ -1053,6 +1053,97 @@ class ModelFree():
         result = minner.minimize(method='powel')
         report_fit(result)
 
+    def get_mono_exponencial_fits(self, atom_name, model_pic='model_free_parameters.pic'):
+        '''
+        This function fits monoexponencial decays to intensities 
+        for the relaxometry data, experimental and calculated
+        '''
+
+        def mono_exp_model(params, time):
+
+            return params['a']*np.e**(-1*params['b']*time)
+
+        def residual(params, time, data, errors):
+            # time = np.array(time)
+            # data = np.array(data)
+            # errors = np.array(errors)
+            return (data - mono_exp_model(params,time))/errors
+
+        def do_fit(time, data, errors):
+            '''
+            does the fit
+            '''
+            params = Parameters()
+            params.add('a', value=np.mean(data))
+            params.add('b', value=1)
+            minner = Minimizer(residual, params, fcn_args=(time, data, errors))
+            result = minner.minimize()
+            return result
+
+
+        # load the model
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
+        protons = ("H1'", "H2'", "H2''")
+
+        # define attributes where we store the data
+        self.relaxometry_mono_exp_fits = {}
+        self.relaxometry_mono_exp_fits_err = {}
+
+        self.relaxometry_mono_calc_fits = {}
+        self.relaxometry_mono_calc_fits_err = {}
+
+        #iterate over the data points, could maybe change this loop to give tag directly
+        for i in sorted_keys:
+            res_info = model_resinfo[i]
+            tag = utils.resinto_to_tag(*model_resinfo[i])
+            resid, resname, atom1, atom2 = res_info
+
+            self.relaxometry_mono_exp_fits[tag] = []
+            self.relaxometry_mono_exp_fits_err[tag] = []
+
+            self.relaxometry_mono_calc_fits[tag] = []
+            self.relaxometry_mono_calc_fits_err[tag] = []
+
+            for f in self.low_fields:
+
+                # the experimental fit
+                intensities = self.low_field_intensities[f][tag]
+                intensity_errors = self.low_field_intensity_errors[f][tag]
+                delays =  self.ShuttleTrajectory.experiment_info[f]['delays']
+                exp_result = do_fit(delays, intensities, intensity_errors)
+
+                # the fit of the calculated intensities, and pull out the coherence we want
+                calc_intensities = self.model_lf_single_field_intensities(models[tag].params, f, res_info, protons)
+                calc_intensities = np.array([j[1] for j in calc_intensities])
+                errors = [1 for i in intensities]
+                calc_result = do_fit(delays, calc_intensities, errors)
+
+                sim_x = np.linspace(min(delays), max(delays), 100)
+                
+                rate = exp_result.params['b'].value
+                exp_fit = mono_exp_model(exp_result.params, sim_x)
+                plt.scatter(delays, intensities, label=f'experimenal points R: {rate:0.2f}', c='C1')
+                plt.plot(sim_x, exp_fit, c='C1')
+
+                calc_fit = mono_exp_model(calc_result.params, sim_x)
+                # scalling
+                rate = calc_result.params['b'].value
+                scaling_factor = np.mean(intensities)/np.mean(calc_intensities)
+                calc_intensities_temp = calc_intensities * scaling_factor
+                calc_fit_temp = calc_fit * scaling_factor
+                plt.scatter(delays, calc_intensities_temp, label=f'calc points R:{rate:0.2f}', c='C2')
+                plt.plot(sim_x, calc_fit_temp, c='C2')
+                plt.legend()
+                plt.savefig(f'check_{tag}_{f}.pdf')
+                plt.close()
+
+                # save the results
+                self.relaxometry_mono_exp_fits[tag].append(exp_result.params['b'].value)
+                self.relaxometry_mono_exp_fits_err[tag].append(exp_result.params['b'].stderr)
+
+                self.relaxometry_mono_calc_fits[tag].append(calc_result.params['b'].value)
+                self.relaxometry_mono_calc_fits_err[tag].append(calc_result.params['b'].stderr)
+
 
     def print_final_residuals(self, pickle_path='default'):
 
@@ -1455,7 +1546,6 @@ class ModelFree():
             pass 
 
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
-        low_fields = sorted(self.ShuttleTrajectory.experiment_info.keys())
         print('plotting relaxometry_intensities')
 
         for i in tqdm(sorted_keys):
@@ -1470,15 +1560,22 @@ class ModelFree():
             values = self.relaxometry_mono_exp_fits[tag]
             err = self.relaxometry_mono_exp_fits_err[tag]
 
+            values_calc = self.relaxometry_mono_calc_fits[tag]
+            err_calc = self.relaxometry_mono_calc_fits_err[tag]
+
             ax0.set_title(tag)
             ax0.errorbar(self.low_fields, values,yerr=err, fmt='|', zorder=2, c='C1')
-            ax0.scatter(self.low_fields, values, edgecolor='black', zorder=3, s=marker_size, c='C1', label='Low field $R_{1}^{apparent}$')
+            ax0.scatter(self.low_fields, values, edgecolor='black', zorder=3, s=marker_size, c='C1', label='Low field $R_{1,exp}^{apparent}$')
+
+            ax0.errorbar(self.low_fields, values_calc,yerr=err_calc, fmt='|', zorder=2, c='C4')
+            ax0.scatter(self.low_fields, values_calc, edgecolor='black', zorder=3, s=marker_size, c='C4', label='Low field $R_{1,calc}^{apparent}$')
+
 
             ax0.errorbar(self.high_fields, self.r1[tag],yerr=self.r1_err[tag], fmt='|', zorder=2)
             ax0.scatter(self.high_fields, self.r1[tag], edgecolor='black', zorder=3, s=marker_size, c='C3', label='High Field $R_1$')
 
             ax0.set_xlabel('Field (T)', fontsize=text_size)
-            ax0.set_ylabel('$R_{1}$ (Hz)', fontsize=text_size)
+            ax0.set_ylabel('$R_{1}^{app}$ (Hz)', fontsize=text_size)
             ax0.tick_params(axis='both', labelsize=tick_size)
             ax0.set_xscale('log')
             ax0.set_xlim(1, 25)
