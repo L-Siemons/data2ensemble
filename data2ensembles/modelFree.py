@@ -245,10 +245,6 @@ class ModelFree():
             if self.relaxometry_mono_exponencial_fits_err_path !=  None:
                 check=True
 
-        # if check == True:
-        #     print('Loading monoexponencial fits of relaxometry decays')
-        #     self.relaxometry_mono_exp_fits, _ = utils.read_nmr_relaxation_rate(self.relaxometry_mono_exponencial_fits_path)
-        #     self.relaxometry_mono_exp_fits_err, _ = utils.read_nmr_relaxation_rate(self.relaxometry_mono_exponencial_fits_err_path)
 
     def load_sigma(self,):
 
@@ -1053,7 +1049,7 @@ class ModelFree():
         result = minner.minimize(method='powel')
         report_fit(result)
 
-    def get_mono_exponencial_fits(self, atom_name, model_pic='model_free_parameters.pic'):
+    def get_mono_exponencial_fits(self, atom_name, model_pic='model_free_parameters.pic', plot=False):
         '''
         This function fits monoexponencial decays to intensities 
         for the relaxometry data, experimental and calculated
@@ -1120,22 +1116,23 @@ class ModelFree():
 
                 sim_x = np.linspace(min(delays), max(delays), 100)
                 
-                rate = exp_result.params['b'].value
-                exp_fit = mono_exp_model(exp_result.params, sim_x)
-                plt.scatter(delays, intensities, label=f'experimenal points R: {rate:0.2f}', c='C1')
-                plt.plot(sim_x, exp_fit, c='C1')
+                if plot == True:
+                    rate = exp_result.params['b'].value
+                    exp_fit = mono_exp_model(exp_result.params, sim_x)
+                    plt.scatter(delays, intensities, label=f'experimenal points R: {rate:0.2f}', c='C1')
+                    plt.plot(sim_x, exp_fit, c='C1')
 
-                calc_fit = mono_exp_model(calc_result.params, sim_x)
-                # scalling
-                rate = calc_result.params['b'].value
-                scaling_factor = np.mean(intensities)/np.mean(calc_intensities)
-                calc_intensities_temp = calc_intensities * scaling_factor
-                calc_fit_temp = calc_fit * scaling_factor
-                plt.scatter(delays, calc_intensities_temp, label=f'calc points R:{rate:0.2f}', c='C2')
-                plt.plot(sim_x, calc_fit_temp, c='C2')
-                plt.legend()
-                plt.savefig(f'check_{tag}_{f}.pdf')
-                plt.close()
+                    calc_fit = mono_exp_model(calc_result.params, sim_x)
+                    # scalling
+                    rate = calc_result.params['b'].value
+                    scaling_factor = np.mean(intensities)/np.mean(calc_intensities)
+                    calc_intensities_temp = calc_intensities * scaling_factor
+                    calc_fit_temp = calc_fit * scaling_factor
+                    plt.scatter(delays, calc_intensities_temp, label=f'calc points R:{rate:0.2f}', c='C2')
+                    plt.plot(sim_x, calc_fit_temp, c='C2')
+                    plt.legend()
+                    plt.savefig(f'check_{tag}_{f}.pdf')
+                    plt.close()
 
                 # save the results
                 self.relaxometry_mono_exp_fits[tag].append(exp_result.params['b'].value)
