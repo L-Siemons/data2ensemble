@@ -253,6 +253,9 @@ def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez):
 
     return taus, amplitudes
 
+# def matrix_exp(A):
+#     return scilinalg.expm(A)
+
 def matrix_exp( np.ndarray[np.float64_t, ndim=2] A):
     '''
     This function calculates a matrix exponencial. In the simulation of the
