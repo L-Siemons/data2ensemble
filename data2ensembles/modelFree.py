@@ -611,6 +611,12 @@ class ModelFree():
                 x = 'c',
                 y = 'h',)
 
+        #str_mat = np.array2string(low_field_relaxation_matrix.T[0], precision=3, separator='\t',suppress_small=False) 
+
+        # code to debug / print a matrix
+        # print(low_field)
+        # print(str_mat)
+        # sys.exit()
 
         delay_propergators = mathFunc.construct_operator(low_field_relaxation_matrix, 
                                 self.ShuttleTrajectory.experiment_info[low_field]['delays'], product=False)
@@ -1049,7 +1055,11 @@ class ModelFree():
         result = minner.minimize(method='powel')
         report_fit(result)
 
-    def get_mono_exponencial_fits(self, atom_name, model_pic='model_free_parameters.pic', plot=False):
+    def get_mono_exponencial_fits(self, 
+        atom_name, 
+        model_pic='model_free_parameters.pic', 
+        plot=False, 
+        plots_directory='monoexp_fits/'):
         '''
         This function fits monoexponencial decays to intensities 
         for the relaxometry data, experimental and calculated
@@ -1076,6 +1086,7 @@ class ModelFree():
             result = minner.minimize()
             return result
 
+        os.makedirs(plots_directory, exist_ok=True)
 
         # load the model
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
@@ -1131,7 +1142,7 @@ class ModelFree():
                     plt.scatter(delays, calc_intensities_temp, label=f'calc points R:{rate:0.2f}', c='C2')
                     plt.plot(sim_x, calc_fit_temp, c='C2')
                     plt.legend()
-                    plt.savefig(f'check_{tag}_{f}.pdf')
+                    plt.savefig(f'{plots_directory}check_{tag}_{f}.pdf')
                     plt.close()
 
                 # save the results
@@ -1141,6 +1152,52 @@ class ModelFree():
                 self.relaxometry_mono_calc_fits[tag].append(calc_result.params['b'].value)
                 self.relaxometry_mono_calc_fits_err[tag].append(calc_result.params['b'].stderr)
 
+
+    def get_coherence_population_with_time(self, 
+        atom_name, 
+        model_pic='model_free_parameters.pic', 
+        plot=False, 
+        plots_directory='coherence_populations/'):
+        '''
+        This function fits monoexponencial decays to intensities 
+        for the relaxometry data, experimental and calculated
+        '''
+
+        os.makedirs(plots_directory, exist_ok=True)
+
+        # load the model
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
+        protons = ("H1'", "H2'", "H2''")
+
+        coherence_names = ("C1'", "H1'", "H2'", "H2''")
+
+        #iterate over the data points, could maybe change this loop to give tag directly
+        for i in sorted_keys:
+            res_info = model_resinfo[i]
+            tag = utils.resinto_to_tag(*model_resinfo[i])
+            resid, resname, atom1, atom2 = res_info
+
+            for f in self.low_fields:
+                calc_intensities = self.model_lf_single_field_intensities(models[tag].params, f, res_info, protons)
+                delays =  self.ShuttleTrajectory.experiment_info[f]['delays']
+
+                for indx, coherence in enumerate(coherence_names):
+                    indx = indx + 1
+
+                    current = []
+                    for delay in calc_intensities:
+                        current.append(delay[indx])
+                    
+                    plt.scatter(delays, current, label=coherence)
+
+                plt.xlabel('delay')
+                plt.ylabel('intensity')
+                plt.legend()
+
+                plt.savefig(f'{plots_directory}{tag}_ {f}_coherence.pdf')
+                plt.close()
+
+                # calc_intensities = np.array([j[1] for j in calc_intensities])
 
     def print_final_residuals(self, pickle_path='default'):
 
@@ -1191,6 +1248,74 @@ class ModelFree():
             hf_residual = self.residual_hf(*hf_residual_args)
             hf_chisq = self.residual_to_chi2(np.array(hf_residual))
             print(f"{i}\t{lf_chisq:.2e}\t{hf_chisq:.2e}\t")
+
+    def write_out_relaxation_matricices_c1p(self,atom_name1, atom_name2,
+        matrix_directory='lowfield_relaxation_matricies/',
+        operator_directory='lowfield_relaxation_operator/',
+        model_pic='model_free_parameters.pic'):
+
+        #make the directory
+        os.makedirs(matrix_directory, exist_ok=True)
+        os.makedirs(operator_directory, exist_ok=True)
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name1)
+        protons = ("H1'", "H2'", "H2''")
+        operator_size = 2 + len(protons)*2
+
+
+        for i in sorted_keys:
+            tag = utils.resinto_to_tag(*model_resinfo[i])
+            res_info = model_resinfo[i]
+            resid, resname, atom1, atom2 = res_info
+            low_field_relaxation_matrix = relax_mat.relaxation_matrix_emf_c1p(models[tag].params,
+                    resid, 
+                    self.spectral_density, 
+                    np.array([self.low_fields]).flatten(), 
+                    self.distances, 
+                    self.cosine_angles, 
+                    resname,
+                    operator_size, 
+                    atom_name1,
+                    atom_name2,
+                    protons, 
+                    x = 'c',
+                    y = 'h',)
+
+            
+            file_name = matrix_directory + f"{tag}_relax_matrix.txt"
+            file_op_name = operator_directory + f"{tag}_relax_matrix.txt"
+            
+            # f_op = open(file_op_name, 'w')
+            f = open(file_name, 'w')
+
+            for matrix, field in zip(low_field_relaxation_matrix.T,  self.low_fields):
+                str_mat = np.array2string(matrix, precision=3, separator='\t',suppress_small=False) 
+                f.write(f'==== {field} ===\n')
+                f.write(str_mat)
+                f.write('\n')
+
+                # operator = mathFunc.construct_operator([low_field_relaxation_matrix[0]], [100e-3], product=False) 
+                # print(operator)
+                # str_mat_op = np.array2string(operator, precision=3, separator='\t',suppress_small=False) 
+                # f_op.write(f'==== {field} ===\n')
+                # f_op.write(str_mat_op)
+                # f_op.write('\n')
+                        
+            f.close()
+            #f_op.close()
+
+
+    def print_trajectory_info(self):
+
+        for field in self.low_fields:
+            traj = self.ShuttleTrajectory.trajectory_time_at_fields[field]
+            forwards_field, forwards_time, backwards_field, backwards_time = traj
+            pretty_fields = np.array2string(forwards_field, precision=2, separator=' , ') 
+            pretty_time = np.array2string(forwards_time*1000, precision=2, separator=' , ')
+            print(f'==== {field} ====')
+            print(f"forwards fields {pretty_fields}")
+            print(f"forwards time (ms) {pretty_time}")
+            print(f'total time travelled: {np.sum(forwards_time)*1000:0.2f}ms')
+
 
     def plot_model_free_parameters(self, atom_name, model_pic='model_free_parameters.pic', plot_name='model_free_params.pdf', showplot=False):
 
