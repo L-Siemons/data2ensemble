@@ -113,7 +113,7 @@ class ShuttleTrajectory():
 
         self.sampled_fields = np.array(self.sampled_fields)
 
-    def construct_single_trajectory(self, field, points=20):
+    def construct_single_trajectory(self, field, points=10):
         '''
         This funcion calculates the time spent at each field during shuttling. 
         Here we assume that shuttling occurs using a linear acceleration to the 
