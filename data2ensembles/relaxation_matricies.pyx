@@ -306,15 +306,15 @@ def relaxation_matrix_emf_c1p(params,
 			cos_key = (resid, proton_i , resid, proton_j)
 			#print(rxy[dist_key])]
 
-			if key in params:
-				dipolar_contribution = rates.r1_YX_dipollar(params, 
-					spectral_density, 
-					fields,
-					rxy[dist_key], 
-					'h',
-					cosine_angles = cos_ang[cos_key])
 
-				proton_dipolar[key] = dipolar_contribution
+			dipolar_contribution = rates.r1_YX_dipollar(params, 
+				spectral_density, 
+				fields,
+				rxy[dist_key], 
+				'h',
+				cosine_angles = cos_ang[cos_key])
+
+			proton_dipolar[key] = dipolar_contribution
 
 	# relaxation for Cz 
 	csa_atom_name = (x_spin, restype)
@@ -356,6 +356,7 @@ def relaxation_matrix_emf_c1p(params,
 
 		for i in proton_dipolar:
 			if item in i[1]:
+				#print(indx, protons[indx], relaxation_matrix[indx_auto][indx_auto] + proton_dipolar[i])
 				relaxation_matrix[indx_auto][indx_auto] = relaxation_matrix[indx_auto][indx_auto] + proton_dipolar[i]
 				relaxation_matrix[indx_tsp][indx_tsp] = relaxation_matrix[indx_tsp][indx_tsp] + proton_dipolar[i]
 				
@@ -388,21 +389,20 @@ def relaxation_matrix_emf_c1p(params,
 			# print(dist_key, rxy[dist_key])
 			cos_key = (resid, item , resid,  jtem)
 			key = (resid, f"{item},{jtem}")
-			if key in params:
-				current_noe = rates.r1_reduced_noe_YX(params, 
-							spectral_density, 
-							fields,
-							rxy[dist_key], 
-							y, 
-							y=y, 
-							cosine_angles=cos_ang[cos_key], 
-							PhysQ=PhysQ)
+			current_noe = rates.r1_reduced_noe_YX(params, 
+						spectral_density, 
+						fields,
+						rxy[dist_key], 
+						y, 
+						y=y, 
+						cosine_angles=cos_ang[cos_key], 
+						PhysQ=PhysQ)
 
-				relaxation_matrix[indx_mod][jndx_mod] = current_noe
-				relaxation_matrix[jndx_mod][indx_mod] = current_noe
+			relaxation_matrix[indx_mod][jndx_mod] = current_noe
+			relaxation_matrix[jndx_mod][indx_mod] = current_noe
 
-				relaxation_matrix[indx_tsp][jndx_tsp] = current_noe
-				relaxation_matrix[jndx_tsp][indx_tsp] = current_noe
+			relaxation_matrix[indx_tsp][jndx_tsp] = current_noe
+			relaxation_matrix[jndx_tsp][indx_tsp] = current_noe
 
 			# print('current NOE', current_noe	)
 
