@@ -630,14 +630,23 @@ class ModelFree():
         #     roll = np.rollaxis(low_field_relaxation_matrix, 2)
         #     mathFunc.matrix_exp(roll[0])
 
-        full_propergators = [stablaization_operator.dot(backwards_operators).dot(i).dot(forwrds_propergators) for i in delay_propergators]
+        # this could probably be shortened by pre-caclulating 
+        # stablaization_operator*backwards_operators
+        full_propergators = []
+        for i in delay_propergators:
+            operators = [stablaization_operator, backwards_operators, i, forwrds_propergators]
+            i = np.linalg.multi_dot(operators)
+            full_propergators.append(i)
+
+
+        # full_propergators = [stablaization_operator.dot(backwards_operators).dot(i).dot(forwrds_propergators) for i in delay_propergators]
+        
         experimets = np.zeros(operator_size)
         experimets[1] = 1.
         #print(np.array_str(full_propergators[0].dot(experimets), precision=2, suppress_small=True))
         #print(len(full_propergators), full_propergators[0].shape)
 
-        intensities = [np.dot(i, experimets) for i in full_propergators]
-        
+        intensities = [np.matmul(i, experimets) for i in full_propergators]
         return intensities
 
     def subtracts_and_divide_by_error(self, a,b,c):
