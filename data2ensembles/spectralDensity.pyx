@@ -108,7 +108,7 @@ def J_anisotropic_emf(params, args):
         term2_bot = (tau_f + tau)**2 + (omega*tau_f*tau)**2
         term2 = term2_top/term2_bot
 
-        term3_top =  (sf-ss)*(tau_s+tau)*tau_s
+        term3_top =  (sf-s2)*(tau_s+tau)*tau_s
         term3_bot = (tau_s + tau)**2 + (omega*tau_s*tau)**2
         term3 = term3_top/term3_bot
 
