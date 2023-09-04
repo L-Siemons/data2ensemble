@@ -1,0 +1,16 @@
+# These are some default extended model free parameters
+# bounderies
+[emf]
+S2_lower = 0.4
+S2_upper = 1.0
+Sf_lower = 0.4
+Sf_upper = 1.0
+tau_f_lower = 40e-12
+tau_f_upper = 500e-12
+tau_s_lower = 500e-12
+tau_s_upper = 15e-9
+#start values 
+S2_start = 1.0
+Sf_start = 0.9
+tau_f_start = 100e-12
+tau_s_start = 0.5e-9
