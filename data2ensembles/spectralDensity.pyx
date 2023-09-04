@@ -79,7 +79,7 @@ def J_anisotropic_emf(params, args):
 
     sf = params['Sf']#.value
     ss = params['Ss']#.value
-    s2 = sf*ss
+    s2 = params['S2']
     tau_s = params['tau_s']#.value
     tau_f = params['tau_f']#.value
 
@@ -115,6 +115,12 @@ def J_anisotropic_emf(params, args):
         total = total +  tau*amp*(term1 + term2 + term3)
     
     total = total * 0.4
+    # print(f'omega {omega}, total {total}')
+    # print(f'term1 {term1}')
+    # print(f'term2 {term2}')
+    # print(f'term3 {term3}')
+    # print(f'Ss {ss}, Sf {sf}, tau_f {tau_f}, tau_s {tau_s}')
+
     return total
 
 def J_anisotropic_mf_old(params, args):
