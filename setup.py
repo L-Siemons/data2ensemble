@@ -21,7 +21,7 @@ setup(
         "data2ensembles/relaxation_matricies.pyx",
        ]),
     #license='LICENSE.txt',
-    package_data={'data2ensembles': ['dat/*dat', 'dat/*txt'],  },
+    package_data={'data2ensembles': ['dat/*dat', 'dat/*txt', 'config/*toml'],  },
     include_package_data=True,
     description=descrip,
     include_dirs=[np.get_include()],
