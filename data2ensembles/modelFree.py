@@ -10,6 +10,7 @@ import data2ensembles.relaxation_matricies as relax_mat
 
 from timeit import default_timer as timer
 from datetime import timedelta
+import toml
 
 import matplotlib
 import matplotlib.cm as cm
@@ -24,6 +25,8 @@ from tqdm import tqdm
 import glob
 import time
 import math 
+import pkg_resources
+import MDAnalysis as md
 
 from lmfit import Minimizer, Parameters, report_fit
 from tqdm import tqdm
@@ -48,6 +51,8 @@ class ModelFree():
         Dyy component of the diffusion tensor
     dz : float
         Dzz component of the diffusion tensor
+    mf_config : str 
+        default or string to a toml file with the parameters for the model free
 
     Attributes
     ----------
@@ -100,6 +105,7 @@ class ModelFree():
     
     diffusion : list 
         contains the diagonalised diffusion tensor (dx,dy,dz)
+
 
     Methods
     -------
@@ -169,7 +175,7 @@ class ModelFree():
         plots the experimental and modeled relaxometry data
     """
 
-    def __init__(self,dx,dy,dz):
+    def __init__(self,dx,dy,dz, mf_config='default'):
 
         self.r1_path = None
         self.r2_path = None 
@@ -203,6 +209,17 @@ class ModelFree():
         self.diffusion = [dx,dy,dz]
         self.fit_results_pickle_file='model_free_parameters.pic'
 
+        # set the file for the configurations
+        if mf_config == 'default':
+            self.emf_toml = pkg_resources.resource_filename('data2ensembles', 'config/extended_model_free.toml')
+        else:
+            self.emf_toml = mf_config
+
+        # now read in the config
+        self.emf_config = toml.load(self.emf_toml)
+        
+        # the structure
+        self.universe = None
 
     def load_data(self):
         '''
@@ -240,10 +257,13 @@ class ModelFree():
         self.r2_err ,_ = utils.read_nmr_relaxation_rate(self.r2_err_path)
         self.hetnoe_err ,_ = utils.read_nmr_relaxation_rate(self.hetnoe_err_path)
 
-        check = False
-        if self.relaxometry_mono_exponencial_fits_path != None:
-            if self.relaxometry_mono_exponencial_fits_err_path !=  None:
-                check=True
+        # load the structure
+        self.universe = md.Universe(self.pdb)
+        
+        # check = False
+        # if self.relaxometry_mono_exponencial_fits_path != None:
+        #     if self.relaxometry_mono_exponencial_fits_err_path !=  None:
+        #         check=True
 
 
     def load_sigma(self,):
@@ -271,6 +291,12 @@ class ModelFree():
         self.ShuttleTrajectory = shuttling.ShuttleTrajectory(file, field_increment = field_increment)
         self.ShuttleTrajectory.construct_all_trajectories()
 
+    def unpack_emf_config(self, tag, config):
+        upper = config[f'{tag}_upper']
+        lower = config[f'{tag}_lower']
+        start = config[f'{tag}_start']
+        return start, upper, lower
+
     def calc_cosine_angles_and_distances(self, atom_names, dist_skip=1):
         '''
         This function determines the cosine angles
@@ -294,6 +320,7 @@ class ModelFree():
 
         # this is not really needed but is used by calc_cosine_angles()
         # could make a change to that function to remvoe it from here 
+        structure_analysis.atom_pair_distance_cutoff = 20e-10
         structure_analysis.calc_inter_atom_distances(atom_names, skip=1)
         structure_analysis.path_prefix = self.path_prefix
 
@@ -302,7 +329,9 @@ class ModelFree():
                         calc_average_structure=False,
                         reference_gro_file = self.pdb, 
                         delete_rmsf_file=True, 
-                        dt = 1, use_reference=True)
+                        dt = 1, 
+                        use_reference=True, 
+                        print_axis=True)
 
         structure_analysis.calc_inter_atom_distances(atom_names, skip=dist_skip)
 
@@ -334,6 +363,21 @@ class ModelFree():
                 c1p_keys.append(i)
         return c1p_keys
 
+    def load_peakfit_file(self, file):
+        array = np.genfromtxt(file, comments="#")
+        delays, intensities, errors = array.T
+        key = file.split('/')[-1].split('.')[0]
+        return delays, intensities, errors, key
+
+    def remove_peakfit_outs(self, files):
+        f_out = []
+        for f in files:
+            if f.split('/')[-1] not in ('logs.out' , 'shifts.out'):
+                f_out.append(f)
+
+        return f_out
+
+
     def load_low_field_data(self, prefix):
         '''
         This function loads all the low field intensities from peakfit output files. 
@@ -363,16 +407,13 @@ class ModelFree():
             files = glob.glob(search)
 
             # read in the files and assign to the correspondin dictionary
+            files = self.remove_peakfit_outs(files)
             for fi in files:
-                if fi.split('/')[-1] not in ('logs.out' , 'shifts.out'):
-                    array = np.genfromtxt(fi, comments="#")
-                    delays, intensities, errors = array.T
-                    key = fi.split('/')[-1].split('.')[0]
-
-                    self.low_field_intensities[f][key] = intensities
-                    self.low_field_intensity_errors[f][key] = errors
-                    #print(f'errors< ', errors)
-                    self.low_field_delays[f][key] = delays
+                delays, intensities, errors, key = self.load_peakfit_file(fi)
+                self.low_field_intensities[f][key] = intensities
+                self.low_field_intensity_errors[f][key] = errors
+                #print(f'errors< ', errors)
+                self.low_field_delays[f][key] = delays
 
     def set_low_field_errors(self, fields, errors):
         '''
@@ -434,6 +475,97 @@ class ModelFree():
         models_resid, model_resinfo = utils.dict_with_full_keys_to_resid_keys(models, atom_name)
         sorted_keys = sorted(list(models_resid.keys()))
         return models, models_resid, sorted_keys, model_resinfo
+
+    def generate_mf_parameters(self, scale_diffusion=False, diffusion=None, model_selector=None, simple=False):
+
+        '''
+        This function takes makes parameter objects for each of the models
+        '''
+        dx,dy,dz = self.diffusion
+        config = copy.deepcopy(self.emf_config['emf'])
+        
+        # models
+        if simple == False:
+            #varriable order S2, tau_s, Sf, tau_f
+            models_state = [[False, False, False, False,],
+                            [True,  False, False, False,]
+                            [True,  True,  False, False],
+                            [True,  True,  True,  False],
+                            [True,  True,  True,  True],]
+        if simple == True:
+            models_state = [[False, False, False, False,]]
+
+        #do we want to fit the diffusion ? 
+        params_lists = []
+        if scale_diffusion == False:
+            fit_diff = [False]
+
+        elif scale_diffusion == True:
+            fit_diff = [False, True]        
+
+            if simple==True:
+                fit_diff = [True]
+
+        for i in fit_diff:
+            for mod in models_state:
+                params = Parameters()
+
+                #always have a S2
+                tag = 'S2'
+                if mod[0] == True:
+                    start, upper, lower = self.unpack_emf_config(tag, config)
+                    params.add(tag, value=start, min=lower, max=upper, vary=True)
+                else:
+                    params.add(tag, value=1, vary=False ,min= 0,max=1)
+
+                # now we add Sf 
+                tag = 'Sf'
+                if mod[2] == True:
+                    start, upper, lower = self.unpack_emf_config(tag, config)
+                    params.add(tag, value=start, min=lower, max=upper, vary=True)
+                else:
+                    params.add(tag, value=1, vary=False)
+
+                # add Ss, which depends on S2 and Sf
+                params.add('Ss', expr='S2/Sf', min=0, max=1)
+
+                # add tau_s 
+                tag = 'tau_s'
+                if mod[1] == True:
+                    start, upper, lower = self.unpack_emf_config(tag, config)
+                    params.add(tag, value=start, min=lower, max=upper, vary=True)
+                else:
+                    params.add(tag, value=0, vary=False)
+
+                # add tau_f 
+                tag = 'tau_f'
+                if mod[3] == True:
+                    start, upper, lower = self.unpack_emf_config(tag, config)
+                    params.add(tag, value=start, min=lower, max=upper, vary=True)
+                else:
+                    params.add(tag, value=0, vary=False)
+
+                if diffusion == None:
+                    params.add('dx_fix',  min=0, value=dx, vary=False)
+                    params.add('dy_fix',  min=0, value=dy, vary=False)
+                    params.add('dz_fix',  min=0, value=dz, vary=False)
+                    params.add('diff_scale', min=0, value=1, vary=i)
+
+                else:
+                    params.add('dx_fix',  min=0, value=diffusion[0], vary=False)
+                    params.add('dy_fix',  min=0, value=diffusion[1], vary=False)
+                    params.add('dz_fix',  min=0, value=diffusion[2], vary=False)
+                    params.add('diff_scale', min=0, value=1, vary=i)
+
+                params.add('dx',  expr='dx_fix*diff_scale')
+                params.add('dy',  expr='dy_fix*diff_scale')
+                params.add('dz',  expr='dz_fix*diff_scale')
+                params_lists.append(params)
+
+        # for i in params_lists[0]:
+        #     print(i, params_lists[0][i])
+        return params_lists
+
 
     def model_hf(self, params,res_info, fields):
         '''
@@ -706,6 +838,59 @@ class ModelFree():
 
         return np.concatenate([r1_diff.flatten(), r2_diff.flatten(), noe_diff.flatten(), [constraint]])
 
+    def residual_hf_diffusion(self, params, r1, r2, hetnoe, r1_err, r2_err, noe_err, res_info):
+        '''
+        calculates the residuals for the high field experiments: R1, R2, hetNOE
+
+        Parameters
+        ----------
+        params : lmfit parameters class, dictionary
+            contains the parameters for the selected spectral density class 
+
+        r1 : ndarray 
+            experimental R1 values
+
+        r2 : ndarray 
+            experimental r2 values 
+
+        hetnoe : ndarray 
+            experimental hetNOE values 
+
+        r1_err : ndarray 
+            experimental R1 errors
+
+        r2_err : ndarray 
+            experimental r2 errors 
+
+        hetnoe_err : ndarray 
+            experimental hetNOE errors 
+
+        res_info : list 
+            list containing the residue information
+
+        Returns 
+        -------
+        ndarray : residuals
+        '''
+        
+        model_r1, model_r2, model_noe = self.model_hf(params,res_info, self.high_fields)
+        
+        diff_r1  = self.subtracts_and_divide_by_error(r1, model_r1,r1_err)
+        diff_r2  = self.subtracts_and_divide_by_error(r2, model_r2,r2_err)
+        diff_noe = self.subtracts_and_divide_by_error(hetnoe, model_noe,noe_err)
+        model_ratio = model_r1/model_r2
+        exp_ratio = r1/r2
+        exp_error = r1_err/r2_err
+
+        diff = self.subtracts_and_divide_by_error(exp_ratio, model_ratio,exp_error)
+        constraint = 0
+
+        if params['tau_s'] < params['tau_f']:
+            constraint = (params['tau_s'] - params['tau_f'])*1e12
+
+        return diff
+        #return np.array([diff_r1, diff_r2])
+
     def residual_lf(self, params, low_field, resinfo, protons, intensities, intensity_errors):
 
         '''
@@ -806,7 +991,7 @@ class ModelFree():
         lf_residual = self.residual_lf(params, low_fields, res_info, protons, intensities, intensity_errors)
         return np.concatenate([hf_residual, lf_residual])
 
-    def fit_single_residue(self, i, provided_diffusion=False, residual_type='hflf', model_select=True):
+    def fit_single_residue(self, i, provided_diffusion=None, residual_type='hflf', model_select=True):
         '''
         This function fits all the models available in model free (set by generate_mf_parameters())
         and selects the best one based on the lowest BIC. 
@@ -840,13 +1025,20 @@ class ModelFree():
         bics[i] = 10e1000
 
         # the rows are Sf, Ss, tauf, taus, might be best to take this out and put it in its own function
-        if provided_diffusion == False:
-            dx,dy,dz = self.diffusion
-        else:
-            dx,dy,dz = provided_diffusion
+        # if provided_diffusion == False:
+        #     dx,dy,dz = self.diffusion
+        # else:
+        #     dx,dy,dz = provided_diffusion
 
-        params_models = generate_mf_parameters(dx,dy,dz, scale_diffusion=self.scale_diffusion)
+        if residual_type=='hf_r2/r1':
+            simple = True
+        else:
+            simple = False
+
+        params_models = self.generate_mf_parameters(scale_diffusion=self.scale_diffusion, 
+            diffusion=provided_diffusion, simple=simple)
         
+        # probably can do this logic a little better
         for params in params_models:
 
             resid, resname, atom1, atom2 = res_info
@@ -878,6 +1070,11 @@ class ModelFree():
                 fcn_args = (*hf_data, *hf_errors, res_info)
                 minner = Minimizer(self.residual_hf, params, fcn_args=(fcn_args))
 
+            elif residual_type == 'hf_r2/r1':
+                # do fit, here with the default leastsq algorithm
+                fcn_args = (*hf_data, *hf_errors, res_info)
+                minner = Minimizer(self.residual_hf_diffusion, params, fcn_args=(fcn_args))
+
             elif residual_type == 'lf':
                 print('This has not been implimented yet ...')
                 os.exit()
@@ -894,7 +1091,9 @@ class ModelFree():
 
             if result.bic < bics[i]:
                 model = result
+                bics[i] = result.bic
 
+        #report_fit(model)
         if model_select == True:
             return (i, model)
 
@@ -914,7 +1113,9 @@ class ModelFree():
         lf_data_suffix='', 
         select_only_some_models=False, 
         cpu_count=-1, 
-        residual_type='hflf'):
+        residual_type='hflf',
+        provided_diffusion=None, 
+        writeout=True):
 
         '''
         This funtion fits a spectral density function to each residue using the
@@ -931,11 +1132,12 @@ class ModelFree():
         args = self.get_c1p_keys()
         kwargs = {}
         kwargs['residual_type'] = residual_type
+
+        #allows a provided diffution tensor to be passed to the fitting. 
+        if provided_diffusion != None:
+            kwargs['provided_diffusion'] = provided_diffusion
+        
         total_args = [(i, kwargs) for i in args]
-
-        # for i in total_args:
-        #     print(i)
-
 
         start_time = time.time()
         if cpu_count == 1:
@@ -953,10 +1155,13 @@ class ModelFree():
         end_time = time.time()
         elapsed_time = end_time - start_time
         print("extended model free fitting Elapsed time: ", elapsed_time) 
-        # save the file
         
-        with open(self.fit_results_pickle_file, 'wb') as handle:
-            pic.dump(models, handle)
+        # save the file
+        if writeout == True:
+            with open(self.fit_results_pickle_file, 'wb') as handle:
+                pic.dump(models, handle)
+
+        return models
 
 
     def wrapper_global_residual(self, args):
@@ -975,12 +1180,15 @@ class ModelFree():
         lf_data_suffix='', 
         select_only_some_models=False, 
         cpu_count=-1, 
-        residual_type='hf'):
+        residual_type='hf', 
+        diffusion_type='linear'):
 
         '''
         This funtion fits a spectral density function to each residue using the
         extended model free formalism. Since Each residue is treated individually
         the diffusion tensor is held as fixed. 
+
+        WARNING: this somehow is not working well at the moment ...
         '''
 
         def global_residual(params, cpu_count):
@@ -1023,15 +1231,15 @@ class ModelFree():
             # blend the residuals for the models based on the aics
             for i in models:
                 # get all the AICS
-                aics = [mod.aic for mod in models[i]]
-                min_aic = min(aics)
+                #aics = [mod.aic for mod in models[i]]
+                #min_aic = min(aics)
 
                 # simpler seleciton of the models - is it better ? Not sure
                 best_aic = 10e10
                 for mod in models[i]:
                     # get all the AICS
                     if mod.bic < best_aic:
-                        best_aic = mod.aic
+                        best_aic = mod.bic
                         current_resids = mod.residual
 
                 resids.append(current_resids)
@@ -1049,9 +1257,135 @@ class ModelFree():
 
         # set up the Parameters object
         params = Parameters()
-        params.add('dx_fix',  min=0, value=self.diffusion[0], vary=False)
-        params.add('dy_fix',  min=0, value=self.diffusion[1], vary=False)
-        params.add('dz_fix',  min=0, value=self.diffusion[2], vary=False)
+
+        if diffusion_type == 'linear':
+            params.add('dx_fix',  min=0, value=self.diffusion[0], vary=False)
+            params.add('dy_fix',  min=0, value=self.diffusion[1], vary=False)
+            params.add('dz_fix',  min=0, value=self.diffusion[2], vary=False)
+
+
+            #scale the diffusion tensor by a single value 
+            params.add('diff_scale', min=0, value=1, vary=True)
+            params.add('dx',  expr='dx_fix*diff_scale')
+            params.add('dy',  expr='dy_fix*diff_scale')
+            params.add('dz',  expr='dz_fix*diff_scale')
+
+        elif diffusion_type == 'axially_symetric':
+
+            dperp = (self.diffusion[0] + self.diffusion[1])/2
+            params.add('dx_fix',  min=0, value=dperp, vary=False)
+            params.add('dy_fix',  expr='dx_fix', vary=False)
+            params.add('dz_fix',  min=0, value=self.diffusion[2], vary=False)
+
+
+            #scale the diffusion tensor by a single value 
+            params.add('diff_scale_long', min=0, value=1, vary=True)
+            params.add('diff_scale_short', min=0, value=1, vary=True)
+            params.add('dx',  expr='dx_fix*diff_scale_short')
+            params.add('dy',  expr='dy_fix*diff_scale_short')
+            params.add('dz',  expr='dz_fix*diff_scale_long')
+
+        else:
+            print('Params object for fitting has not been set correctly.')
+            print('check the diffusion_type kwarg')
+            sys.exit()
+
+        args = [cpu_count]
+        minner = Minimizer(global_residual, params, fcn_args=args)
+        result = minner.minimize(method='powel')
+        report_fit(result)
+
+    def scale_hydro_nmr_diffusion_tensor(self, 
+        lf_data_prefix='', 
+        lf_data_suffix='', 
+        select_only_some_models=False, 
+        cpu_count=-1, 
+        residual_type='hf', 
+        diffusion_type='linear'):
+
+        '''
+        This function scales the hydroNMR diffusion tensor to NMR data using an approach similar
+        https://sci-hub.hkvisa.net/10.1126/science.7754375
+
+        and 
+
+        Rotational diffusion anisotropy of proteins from simultaneous analysis of 15N and 13Cα nuclear spin relaxation
+        '''
+
+        def q_model(cosine_angles, q):
+            cosine_angles = np.array(cosine_angles)
+            part_1 = np.matmul(q, cosine_angles)
+            part_2 = np.matmul(cosine_angles, part_1)
+            return part_2
+
+        def resid(params, diso):
+
+            # set up the matrix q
+            dx = params['dx']
+            dy = params['dy']
+            dz = params['dz']
+
+            qx = (dy + dz)/2
+            qy = (dx + dz)/2
+            qz = (dx + dy)/2
+
+            q = np.zeros([3,3])
+            q[0][0] = qx
+            q[1][1] = qy
+            q[2][2] = qz
+
+            # determine the diffusions
+            diffs = []
+            for i in diso:
+                res_info = utils.get_atom_info_from_tag(i)
+                resid, resname, atom1, atom2 = res_info
+                key = (resid, atom1 , resid, atom2)
+
+                cosine_angles = self.cosine_angles[key]
+                diffs.append(diso[i] - q_model(cosine_angles, q))
+
+            return diffs
+
+
+
+        #step one is to get all local tau_c 
+        # this will give us an isotropic model
+        diffusion = [1e7, 1e7, 1e7]
+
+        original_value = copy.copy(self.scale_diffusion)
+        print(f'Setting self.scale_diffusion = True, from {original_value}')
+        
+        self.scale_diffusion = True
+        models = self.per_residue_emf_fit(residual_type='hf_r2/r1',
+            provided_diffusion=diffusion, cpu_count =1,
+            writeout=False)
+
+        print(f'Setting self.scale_diffusion back to: {original_value}')
+        self.scale_diffusion = original_value
+        print(f'value now: {self.scale_diffusion}')
+
+        # get Di
+        diso_local = {}
+        for i in models:
+            #check it was isotropic 
+            assert models[i].params['dx'] == models[i].params['dy'] , "dx != dy"
+            assert models[i].params['dx'] == models[i].params['dz'] , "dx != dz"
+            diso_local[i] = np.mean([models[i].params[j] for j in ('dx','dy','dz')])
+
+        #get moment of inertia
+        moment_of_inertia = []
+        for ts in self.universe.trajectory:
+            moment_of_inertia.append(self.universe.select_atoms('all').moment_of_inertia())
+
+        # I dont think I need to transform my cosine angles if they are the angles 
+        # between the principle axis ... 
+
+        # now we set up the parameters for the diffusion calculation
+        params = Parameters()
+        params.add('dx_fix', value=self.diffusion[0], vary=False)
+        params.add('dy_fix', value=self.diffusion[1], vary=False)
+        params.add('dz_fix', value=self.diffusion[2], vary=False)
+
 
         #scale the diffusion tensor by a single value 
         params.add('diff_scale', min=0, value=1, vary=True)
@@ -1059,13 +1393,15 @@ class ModelFree():
         params.add('dy',  expr='dy_fix*diff_scale')
         params.add('dz',  expr='dz_fix*diff_scale')
 
-        args = [cpu_count]
-        minner = Minimizer(global_residual, params, fcn_args=args)
+        minner = Minimizer(resid,params, fcn_args=[diso_local])
         result = minner.minimize(method='powel')
         report_fit(result)
 
+
+
     def get_mono_exponencial_fits(self, 
         atom_name, 
+        protons,
         model_pic='model_free_parameters.pic', 
         plot=False, 
         plots_directory='monoexp_fits/'):
@@ -1099,7 +1435,6 @@ class ModelFree():
 
         # load the model
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
-        protons = ("H1'", "H2'", "H2''")
 
         # define attributes where we store the data
         self.relaxometry_mono_exp_fits = {}
@@ -1161,9 +1496,180 @@ class ModelFree():
                 self.relaxometry_mono_calc_fits[tag].append(calc_result.params['b'].value)
                 self.relaxometry_mono_calc_fits_err[tag].append(calc_result.params['b'].stderr)
 
+    def fit_proton_noes(self, atom_name1, protons, data_dir, fields, 
+                        out_folder='proton_proton_buildup', 
+                        model_pic='model_free_parameters.pic', 
+                        delay_min=0.005, 
+                        delay_max=0.03): 
+        '''
+        takes a file of relaxation rates and plots it against the elements from the relaxation 
+        matrix
+        '''
+
+        os.makedirs(out_folder, exist_ok=True)
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name1)
+        
+        search = data_dir + '/*out'
+        total_protons = [atom_name1] + protons
+        files = glob.glob(search)
+        intensities = {}
+        delays = {}
+        errors = {}
+        operator_size = 2 + len(protons)*2
+
+        # read in the files and assign to the correspondin dictionary
+        files = self.remove_peakfit_outs(files)
+        for fi in files:
+            current_delays, current_intensities, current_errors, key = self.load_peakfit_file(fi)
+
+            selector = np.logical_and(current_delays>delay_min ,current_delays<delay_max)
+            intensities[key] = current_intensities[selector]
+            delays[key] = current_delays[selector]
+            errors[key] = current_errors[selector]
+
+        for key in models:
+            models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name1)
+            
+            res_info = utils.get_atom_info_from_tag(key)
+            resid, resname, atom1, atom2 = res_info
+            atom_1_c = atom1.replace("H", "C")
+
+            
+            # with motions            
+            full_matrix = relax_mat.relaxation_matrix_emf_c1p(models[key].params,
+                resid, 
+                self.spectral_density, 
+                fields, 
+                self.distances, 
+                self.cosine_angles, 
+                resname,
+                operator_size, 
+                atom_1_c,
+                atom_name1,
+                protons, 
+                x = 'c',
+                y = 'h',)
+
+            str_mat = np.array2string(full_matrix[:,:,0], separator='\t',suppress_small=True, 
+                        formatter={"float": utils.np2string_formatter}, max_line_width=1e5) 
+            # print(key)
+            # print(str_mat)
+            # print(intensities.keys())
+
+            small_matrix = np.zeros([len(total_protons), len(total_protons)])
+            
+            for i in range(len(protons)):
+                big_mat_i = i + 2
+                i = i + 1
+                for j in range(len(protons)):
+                    big_mat_j = j + 2
+                    j = j + 1
+
+                    if i == j: 
+                        small_matrix[i][j] = full_matrix[big_mat_i][big_mat_j]
+                    else:
+                        small_matrix[i][j] = full_matrix[big_mat_i][big_mat_j]
+
+            small_matrix = small_matrix[:, :, np.newaxis]
+
+            #without motions 
+            full_matrix = relax_mat.relaxation_matrix_emf_c1p_no_long_range_motion(models[key].params,
+                resid, 
+                self.spectral_density, 
+                fields, 
+                self.distances, 
+                self.cosine_angles, 
+                resname,
+                operator_size, 
+                atom_1_c,
+                atom_name1,
+                protons, 
+                x = 'c',
+                y = 'h',)
+
+            small_matrix_no_motion = np.zeros([len(total_protons), len(total_protons)])
+            
+            for i in range(len(protons)):
+                big_mat_i = i + 2
+                i = i + 1
+                for j in range(len(protons)):
+                    big_mat_j = j + 2
+                    j = j + 1
+
+                    if i == j: 
+                        small_matrix_no_motion[i][j] = full_matrix[big_mat_i][big_mat_j]
+                    else:
+                        small_matrix_no_motion[i][j] = full_matrix[big_mat_i][big_mat_j]
+
+            small_matrix_no_motion = small_matrix_no_motion[:, :, np.newaxis]
+
+            key1 = f"{resname}{resid}{protons[2]}-{resname}{resid}{atom_name1}"
+            key2 = f"{resname}{resid}{protons[1]}-{resname}{resid}{atom_name1}"
+
+            check = True
+            if key1 not in delays:
+                check = False
+
+            if key2 not in delays:
+                check = False
+
+            if check == True:
+                current_delays1 = delays[key1]
+                current_delays2 = delays[key2]
+                synth_delays = np.linspace(min(current_delays1)*0.95, max(current_delays1)*1.05, 50)
+
+                simlation = []
+                
+                #with motions 
+                delay_propergators = mathFunc.construct_operator(small_matrix,synth_delays, product=False)
+                experimets = np.zeros(len(protons)+1)
+                experimets[1] = 1.
+                calc_intensities = [np.matmul(i, experimets) for i in delay_propergators]
+                calc_intensities = np.array(calc_intensities)
+
+                #without motions
+                delay_propergators = mathFunc.construct_operator(small_matrix_no_motion,synth_delays, product=False)
+                experimets = np.zeros(len(protons)+1)
+                experimets[1] = 1.
+                calc_intensities_no_motion = [np.matmul(i, experimets) for i in delay_propergators]
+                calc_intensities_no_motion = np.array(calc_intensities_no_motion)
+
+                #with motions
+                scale = np.mean(np.absolute([intensities[key1], intensities[key2]]))
+                factor1 = np.mean([calc_intensities[:,2], calc_intensities[:,3]])/scale
+
+                #without motions
+                factor1_no_motion = np.mean([calc_intensities_no_motion[:,2], calc_intensities_no_motion[:,3]])/scale
+
+                plt.title(resid)
+                plt.plot(synth_delays, calc_intensities[:,2]/factor1, ':', c="C1", label=protons[1])
+                plt.plot(synth_delays, calc_intensities[:,3]/factor1, ':', c="C2", label=protons[2])
+
+                plt.plot(synth_delays, calc_intensities_no_motion[:,2]/factor1_no_motion,  c="C1", label=protons[1])
+                plt.plot(synth_delays, calc_intensities_no_motion[:,3]/factor1_no_motion,  c="C2",label=protons[2])
+
+                plt.legend()
+                
+                plt.errorbar(delays[key1], intensities[key1], yerr=errors[key1], c="C1", fmt='o')
+                plt.errorbar(delays[key2], intensities[key2], yerr=errors[key2], c="C2", fmt='o')
+                plt.xlabel('time (s)')
+                plt.ylabel('intensity')
+                plt.savefig(f'{out_folder}/{key1}_{key2}_{fields[0]}.pdf')
+                plt.close()
+
+
+        # for key in intensities.keys():
+        #     res_info = utils.get_atom_info_from_tag(key)
+        #     resid, resname, atom1, atom2 = res_info
+        #     carbon_name = atom1.replace('H', 'C')
+
+        #     if atom1 == atom_name1:
+
+        #         model = models
 
     def get_coherence_population_with_time(self, 
         atom_name, 
+        protons, 
         model_pic='model_free_parameters.pic', 
         plot=False, 
         plots_directory='coherence_populations/'):
@@ -1176,9 +1682,8 @@ class ModelFree():
 
         # load the model
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
-        protons = ("H1'", "H2'", "H2''")
 
-        coherence_names = ("C1'", "H1'", "H2'", "H2''")
+        coherence_names = list(atom_name) + protons
 
         #iterate over the data points, could maybe change this loop to give tag directly
         for i in sorted_keys:
@@ -1208,7 +1713,7 @@ class ModelFree():
 
                 # calc_intensities = np.array([j[1] for j in calc_intensities])
 
-    def print_final_residuals(self, pickle_path='default'):
+    def print_final_residuals(self, protons, pickle_path='default'):
 
         '''
         This function takes the output from an extended model free 
@@ -1238,7 +1743,6 @@ class ModelFree():
 
             res_info = utils.get_atom_info_from_tag(i)
             resid, resname, atom1, atom2 = res_info
-            protons = ("H1'", "H2'", "H2''")
 
             low_fields = list(self.ShuttleTrajectory.experiment_info.keys())
             intensities = []
@@ -1258,7 +1762,72 @@ class ModelFree():
             hf_chisq = self.residual_to_chi2(np.array(hf_residual))
             print(f"{i}\t{lf_chisq:.2e}\t{hf_chisq:.2e}\t")
 
+    def plot_relaxation_matrix_element_vs_measured(self, element_co_ords, file_values, file_errors, fields, out_folder, atom_name1, atom_name2, protons, model_pic='model_free_parameters.pic'): 
+        '''
+        takes a file of relaxation rates and plots it against the elements from the relaxation 
+        matrix
+        '''
+
+        os.makedirs(out_folder, exist_ok=True)
+        rates,_ = utils.read_nmr_relaxation_rate(file_values)
+        errors,_ = utils.read_nmr_relaxation_rate(file_errors)
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name1)
+        
+        operator_size = 2 + len(protons)*2
+        selected_keys = []
+        for i in rates.keys():
+            if atom_name1 in i:
+                selected_keys.append(i)
+
+        calc = []
+        exp = []
+        error = []
+
+        for i in selected_keys: 
+
+            res_info = utils.get_atom_info_from_tag(i)
+            resid, resname, atom1, atom2 = res_info
+
+            relaxation_matricies = relax_mat.relaxation_matrix_emf_c1p(models[i].params,
+                resid, 
+                self.spectral_density, 
+                fields, 
+                self.distances, 
+                self.cosine_angles, 
+                resname,
+                operator_size, 
+                atom_name1,
+                atom_name2,
+                protons, 
+                x = 'c',
+                y = 'h',)
+            
+            calc.append(relaxation_matricies[element_co_ords[0], element_co_ords[1],:])
+            exp.append(rates[i])
+            error.append(errors[i])
+
+        calc = np.array(calc).T
+        exp = np.array(exp).T
+        error = np.array(error).T
+
+        for ci, expi, erri, fi in zip(calc, exp, error, fields):
+
+            maxi = np.max([ci, expi])
+            mini = np.min([ci, expi])
+            print([mini, mini], [maxi, maxi])
+            plt.plot([mini, maxi], [mini, maxi])
+            plt.errorbar(ci, expi, yerr=erri, label=f'{fi:0.2f} T', fmt='o')
+            plt.legend()
+            plt.xlabel('calc rate')
+            plt.ylabel('exp rate')
+            plt.tight_layout()
+            # plt.show()
+            plt.savefig(out_folder+f"/rate_{fi:0.2f}.pdf")
+            plt.close()
+
+
     def write_out_relaxation_matricices_c1p(self,atom_name1, atom_name2,
+        protons,
         matrix_directory='lowfield_relaxation_matricies/',
         operator_directory='lowfield_relaxation_operator/',
         model_pic='model_free_parameters.pic'):
@@ -1267,9 +1836,8 @@ class ModelFree():
         os.makedirs(matrix_directory, exist_ok=True)
         os.makedirs(operator_directory, exist_ok=True)
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name1)
-        protons = ("H1'", "H2'", "H2''")
+        
         operator_size = 2 + len(protons)*2
-
 
         for i in sorted_keys:
             tag = utils.resinto_to_tag(*model_resinfo[i])
@@ -1289,6 +1857,19 @@ class ModelFree():
                     x = 'c',
                     y = 'h',)
 
+            high_field_relaxation_matrix = relax_mat.relaxation_matrix_emf_c1p(models[tag].params,
+                    resid, 
+                    self.spectral_density, 
+                    np.array([self.high_fields]).flatten(), 
+                    self.distances, 
+                    self.cosine_angles, 
+                    resname,
+                    operator_size, 
+                    atom_name1,
+                    atom_name2,
+                    protons, 
+                    x = 'c',
+                    y = 'h',)
             
             file_name = matrix_directory + f"{tag}_relax_matrix.txt"
             file_op_name = operator_directory + f"{tag}_relax_matrix.txt"
@@ -1296,11 +1877,17 @@ class ModelFree():
             # f_op = open(file_op_name, 'w')
             f = open(file_name, 'w')
 
-            for matrix, field in zip(low_field_relaxation_matrix.T,  self.low_fields):
-                str_mat = np.array2string(matrix, precision=3, separator='\t',suppress_small=False) 
-                f.write(f'==== {field} ===\n')
-                f.write(str_mat)
-                f.write('\n')
+            matricies = [low_field_relaxation_matrix, high_field_relaxation_matrix]
+            field_list = [self.low_fields, self.high_fields]
+
+            for matrix_list, field_list in zip(matricies, field_list):
+                for matrix, field in zip(matrix_list.T,  field_list):
+
+                    str_mat = np.array2string(matrix, separator='\t',suppress_small=True, 
+                        formatter={"float": utils.np2string_formatter}, max_line_width=1e5) 
+                    f.write(f'==== {field} ===\n')
+                    f.write(str_mat)
+                    f.write('\n')
 
                 # operator = mathFunc.construct_operator([low_field_relaxation_matrix[0]], [100e-3], product=False) 
                 # print(operator)
@@ -1750,67 +2337,6 @@ class ModelFree():
                 plt.legend()
                 plt.savefig(f'{folder}field_{f}_{tag}.pdf')
                 plt.close()
-
-def generate_mf_parameters(dx,dy,dz,scale_diffusion=False, diffusion=None):
-
-
-    # models 
-
-
-    models_state = [[True, True,  False, False],
-                    [True, True,  True,  False],
-                    [True, True,  True,  True],]
-
-    params_lists = []
-    if scale_diffusion == False:
-        fit_diff = [False]
-    elif scale_diffusion == True:
-        fit_diff = [False, True]
-
-    for i in fit_diff:
-        for mod in models_state:
-            params = Parameters()
-
-            if mod[0] == True:
-                params.add('Ss', value=1., min=0.4, max=1., vary=True)
-
-            if mod[1] == True:
-                params.add('tau_s', value=0.5e-9, vary=True, max=15e-9, min=500e-12)
-            else:
-                params.add('tau_s', value=0, vary=False)
-
-            if mod[2] == True:
-                params.add('Sf', value=0.9, min=0.4, vary=True, max=1)
-            else:
-                params.add('Sf', value=0, vary=False)
-
-
-            if mod[3] == True:
-                params.add('tau_f', value=100e-12, min=40e-12, vary=True,max=500e-12)
-                #this should ensure that tauf is 5 times smaller than taus 
-                params.add('diff', min=0, expr='tau_s-5*tau_f')
-            else:
-                params.add('tau_f', value=0, vary=False)
-
-            if diffusion == None:
-                params.add('dx_fix',  min=0, value=dx, vary=False)
-                params.add('dy_fix',  min=0, value=dy, vary=False)
-                params.add('dz_fix',  min=0, value=dz, vary=False)
-                params.add('diff_scale', min=0, value=1, vary=i)
-
-            else:
-                params.add('dx_fix',  min=0, value=diffusion[0], vary=False)
-                params.add('dy_fix',  min=0, value=diffusion[1], vary=False)
-                params.add('dz_fix',  min=0, value=diffusion[2], vary=False)
-                params.add('diff_scale', min=0, value=1, vary=i)
-
-            params.add('dx',  expr='dx_fix*diff_scale')
-            params.add('dy',  expr='dy_fix*diff_scale')
-            params.add('dz',  expr='dz_fix*diff_scale')
-            params_lists.append(params)
-
-    return params_lists
-
 
 # def generate_mf_parameters(dx,dy,dz,scale_diffusion=False, diffusion=None):
 #     if scale_diffusion == False:
