@@ -332,3 +332,16 @@ def dict_with_full_keys_to_resid_keys(dictionary, atom_type):
 
 def resinto_to_tag(resid, resname, atom1, atom2):
     return f"{resname}{resid}{atom2}-{resname}{resid}{atom1}"
+
+def np2string_formatter(x):
+    '''
+    a function to pass np2string to format the flaots nicely
+    '''
+    
+    formatted = "{:.3f}".format(x)  # Format the float with fixed decimal places
+    if formatted == '0.000':
+        formatted = ' 0.   '
+
+    elif '-' not in formatted:
+        formatted = ' ' + formatted
+    return formatted
