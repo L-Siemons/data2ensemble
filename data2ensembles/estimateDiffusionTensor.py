@@ -22,7 +22,6 @@ def guess_from_local_tc(r1_file, r2_file, hetNoe_file,
     '''
     This function esimates the diffusion tensor from the per-residue isotropic correlation times 
     as described in https://sci-hub.hkvisa.net/10.1126/science.7754375
-
     The PDB file needs to aligned aling its principle axis
 
     please note that the atom names in the r1, r2 and hetnoe files need to match those used in the 
