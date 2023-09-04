@@ -313,7 +313,8 @@ class AnalyseTrr():
                         delete_rmsf_file=True, 
                         reference_gro_file = None,
                         dt = 1000, 
-                        use_reference=False):
+                        use_reference=False, 
+                        print_axis=False):
 
         # try calculating the principle axis with gromacs
         # then average them and determine all the angles and 
@@ -351,16 +352,22 @@ class AnalyseTrr():
         axis = self.average_uni.select_atoms('all').principal_axes()
 
         #this file can be written out as a check if desired
+        labels = ['large', 'middle', 'small']
         if write_out_angles == True:
             angles_out = open(self.path_prefix + '_dipolar_angles.dat', 'w')
             
             #write out the principle axis
             pas_out = open(self.path_prefix + '_principle_axis.dat', 'w')
-            labels = ['large', 'middle', 'small']
             for i,j in zip(axis, labels):
                 #this should go x,y,x
                 pas_out.write(f'{j} {i[0]:0.2f} {i[1]:0.2f} {i[2]:0.2f}\n')
             pas_out.close()
+
+        if print_axis == True:
+            print('These are the principle axis of the system')
+            for i,j in zip(axis, labels):
+                #this should go x,y,x
+                print(f'{j} {i[0]:0.2f} {i[1]:0.2f} {i[2]:0.2f}')
 
         self.cosine_angles = {}
         atom_info = self.make_atom_pairs_list(atom_names)
