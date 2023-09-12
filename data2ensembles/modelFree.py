@@ -7,10 +7,14 @@ import data2ensembles as d2e
 import data2ensembles.structureUtils as strucUtils
 import data2ensembles.shuttling as shuttling
 import data2ensembles.relaxation_matricies as relax_mat
+import data2ensembles.adaptive_sampler as adaptive
 
 from timeit import default_timer as timer
 from datetime import timedelta
 import toml
+
+import scipy
+import scipy.interpolate
 
 import matplotlib
 import matplotlib.cm as cm
@@ -27,6 +31,7 @@ import time
 import math 
 import pkg_resources
 import MDAnalysis as md
+import itertools
 
 from lmfit import Minimizer, Parameters, report_fit
 from tqdm import tqdm
@@ -487,8 +492,7 @@ class ModelFree():
         # models
         if simple == False:
             #varriable order S2, tau_s, Sf, tau_f
-            models_state = [[False, False, False, False,],
-                            [True,  False, False, False,]
+            models_state = [[True,  False, False, False],
                             [True,  True,  False, False],
                             [True,  True,  True,  False],
                             [True,  True,  True,  True],]
@@ -991,7 +995,61 @@ class ModelFree():
         lf_residual = self.residual_lf(params, low_fields, res_info, protons, intensities, intensity_errors)
         return np.concatenate([hf_residual, lf_residual])
 
-    def fit_single_residue(self, i, provided_diffusion=None, residual_type='hflf', model_select=True):
+    def chi_square(self, residual_func, resid_args):
+        '''
+        This function returns the chi square statistic from the residuals
+        '''
+        diffs = residual_func(*resid_args)
+        squares = np.square(diffs)
+        return np.sum(squares)
+
+    def residual_selector(self, i, residual_type, res_info):
+
+        if 'hf' in residual_type:
+            hf_data = (self.r1[i], self.r2[i], self.hetnoe[i])
+            hf_errors = (self.r1_err[i], self.r2_err[i], self.hetnoe_err[i])
+
+        if 'lf' in residual_type:
+            protons = ("H1'", "H2'", "H2''")
+            low_fields = list(self.ShuttleTrajectory.experiment_info.keys())
+            intensities = []
+            intensity_errors = []
+
+            for f in low_fields:
+                intensities.append(self.low_field_intensities[f][i])
+                intensity_errors.append(self.low_field_intensity_errors[f][i])
+
+        if residual_type == 'hflf':
+            # do fit, here with the default leastsq algorithm
+            fcn_args = (hf_data, hf_errors, res_info, low_fields, 
+                        protons,intensities, intensity_errors)
+            
+            residual_func = self.residual_hflf
+
+            #minner = Minimizer(self.residual_hflf, params, fcn_args=())
+
+        elif residual_type == 'hf':
+            # do fit, here with the default leastsq algorithm
+            fcn_args = (*hf_data, *hf_errors, res_info)
+            residual_func = self.residual_hf
+            #minner = Minimizer(self.residual_hf, params, fcn_args=(fcn_args))
+
+        elif residual_type == 'hf_r2/r1':
+            # do fit, here with the default leastsq algorithm
+            fcn_args = (*hf_data, *hf_errors, res_info)
+            residual_func = self.residual_hf_diffusion
+            #minner = Minimizer(self.residual_hf_diffusion, params, fcn_args=(fcn_args))
+
+        elif residual_type == 'lf':
+            print('This has not been implimented yet ...')
+            os.exit()
+
+        else:
+            print('This residual_type is not recognised.')
+
+        return fcn_args, residual_func
+
+    def fit_single_residue(self, i, provided_diffusion=None, residual_type='hflf', model_select=True, minimistion_method='powell'):
         '''
         This function fits all the models available in model free (set by generate_mf_parameters())
         and selects the best one based on the lowest BIC. 
@@ -1014,7 +1072,7 @@ class ModelFree():
             If True then the best model is selected based on the bic. If False all models are returned
 
         '''
-        print(i)
+        print(f'fitting {i} with method {minimistion_method}')
         # get the atom info
         res_info = utils.get_atom_info_from_tag(i)
         resid, resname, atom1, atom2 = res_info
@@ -1044,46 +1102,11 @@ class ModelFree():
             resid, resname, atom1, atom2 = res_info
             key = (resid, atom1 , resid, atom2)
             # args = (np.array([23,16])*self.PhysQ.gamma['c'],self.cosine_angles[key][0], self.cosine_angles[key][1], self.cosine_angles[key][2], )
-            
-            if 'hf' in residual_type:
-                hf_data = (self.r1[i], self.r2[i], self.hetnoe[i])
-                hf_errors = (self.r1_err[i], self.r2_err[i], self.hetnoe_err[i])
 
-            if 'lf' in residual_type:
-                protons = ("H1'", "H2'", "H2''")
-                low_fields = list(self.ShuttleTrajectory.experiment_info.keys())
-                intensities = []
-                intensity_errors = []
-
-                for f in low_fields:
-                    intensities.append(self.low_field_intensities[f][i])
-                    intensity_errors.append(self.low_field_intensity_errors[f][i])
-
-            if residual_type == 'hflf':
-                # do fit, here with the default leastsq algorithm
-                minner = Minimizer(self.residual_hflf, params, fcn_args=(hf_data, 
-                    hf_errors, res_info, low_fields, 
-                    protons,intensities, intensity_errors))
-
-            elif residual_type == 'hf':
-                # do fit, here with the default leastsq algorithm
-                fcn_args = (*hf_data, *hf_errors, res_info)
-                minner = Minimizer(self.residual_hf, params, fcn_args=(fcn_args))
-
-            elif residual_type == 'hf_r2/r1':
-                # do fit, here with the default leastsq algorithm
-                fcn_args = (*hf_data, *hf_errors, res_info)
-                minner = Minimizer(self.residual_hf_diffusion, params, fcn_args=(fcn_args))
-
-            elif residual_type == 'lf':
-                print('This has not been implimented yet ...')
-                os.exit()
-
-            else:
-                print('This residual_type is not recognised.')
-
+            fcn_args, residual_func = self.residual_selector(i, residual_type, res_info)
             start_time = time.time()
-            result = minner.minimize(method='powel')
+            minner = Minimizer(residual_func, params, fcn_args=(fcn_args))
+            result = minner.minimize(method=minimistion_method)
             resdict = result.params.valuesdict()
             end_time = time.time()
             elapsed_time = end_time - start_time
@@ -1115,7 +1138,8 @@ class ModelFree():
         cpu_count=-1, 
         residual_type='hflf',
         provided_diffusion=None, 
-        writeout=True):
+        writeout=True, 
+        minimistion_method='powell'):
 
         '''
         This funtion fits a spectral density function to each residue using the
@@ -1132,6 +1156,7 @@ class ModelFree():
         args = self.get_c1p_keys()
         kwargs = {}
         kwargs['residual_type'] = residual_type
+        kwargs['minimistion_method'] = minimistion_method
 
         #allows a provided diffution tensor to be passed to the fitting. 
         if provided_diffusion != None:
@@ -1346,8 +1371,6 @@ class ModelFree():
 
             return diffs
 
-
-
         #step one is to get all local tau_c 
         # this will give us an isotropic model
         diffusion = [1e7, 1e7, 1e7]
@@ -1356,9 +1379,8 @@ class ModelFree():
         print(f'Setting self.scale_diffusion = True, from {original_value}')
         
         self.scale_diffusion = True
-        models = self.per_residue_emf_fit(residual_type='hf_r2/r1',
-            provided_diffusion=diffusion, cpu_count =1,
-            writeout=False)
+        models = self.per_residue_emf_fit(residual_type=diffusion_type,
+            provided_diffusion=diffusion, writeout=False)
 
         print(f'Setting self.scale_diffusion back to: {original_value}')
         self.scale_diffusion = original_value
@@ -1397,6 +1419,75 @@ class ModelFree():
         result = minner.minimize(method='powel')
         report_fit(result)
 
+        res_dict = result.params.valuesdict()
+        diso = np.mean([res_dict['dx'], res_dict['dy'], res_dict['dz']])
+        print(f'Diso = {diso}')
+        print(f'tauc iso = {1/(6*diso)}')
+
+    def global_connected_emf_fit(self, atom_name,
+        cpu_count=-1, 
+        residual_type='hflf',
+        provided_diffusion=None, 
+        writeout=True, 
+        model_pic='model_free_parameters.pic'):
+
+        '''
+        Here I do a global fit starting from some parameters from a local fit. 
+        '''
+
+        
+
+        # load the previous models
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
+
+        #build the parameters object
+        params = Parameters()
+
+        varriables = ['S2', 'Sf', 'Ss', 'tau_s', 'tau_f']
+
+        #iterate over the data points, could maybe change this loop to give tag directly
+        for i in sorted_keys:
+            res_info = model_resinfo[i]
+            resid, resname, atom1, atom2 = res_info
+            tag = utils.resinto_to_tag(*model_resinfo[i])
+
+            current_params = models[tag].params
+            for var in varriables:
+                current_params_var = current_params[var]
+                var_name = f'{var}_res_{resid}'
+
+                params_kwargs = {}
+                params_kwargs['value'] = current_params_var.value
+                params_kwargs['vary'] =  current_params_var.vary
+                params_kwargs['min'] =  current_params_var.min
+                params_kwargs['max'] =  current_params_var.max
+                
+                if current_params_var.expr != None:
+
+                    current_str = current_params_var.expr
+                    current_str = current_str.replace('S2', f'S2_res_{resid}')
+                    current_str = current_str.replace('Sf', f'Sf_res_{resid}')
+                    print(current_str)
+
+                    params_kwargs['expr'] = current_str
+                
+                params.add(var_name, **params_kwargs)
+
+        # now add the diffusion values
+        params.add('dx_fix', value=self.diffusion[0], vary=False)
+        params.add('dy_fix', value=self.diffusion[1], vary=False)
+        params.add('dz_fix', value=self.diffusion[2], vary=False)
+
+
+        #scale the diffusion tensor by a single value 
+        params.add('diff_scale', min=0, value=1, vary=True)
+        params.add('dx',  expr='dx_fix*diff_scale')
+        params.add('dy',  expr='dy_fix*diff_scale')
+        params.add('dz',  expr='dz_fix*diff_scale')
+
+        print(f'In total there are {len(params.keys())} parameters')
+
+        return models
 
 
     def get_mono_exponencial_fits(self, 
@@ -1495,6 +1586,227 @@ class ModelFree():
 
                 self.relaxometry_mono_calc_fits[tag].append(calc_result.params['b'].value)
                 self.relaxometry_mono_calc_fits_err[tag].append(calc_result.params['b'].stderr)
+
+    def chi_square_surface_resid_wrapper(self, 
+        param1_value, 
+        param2_value, 
+        param1_name, 
+        param2_name, 
+        params, 
+        resid_args, 
+        resid_func,):
+
+        params = copy.copy(params.valuesdict())
+        params[param1_name] = param1_value
+        params[param2_name] = param2_value
+
+        resid_args = [params, *resid_args]
+        chi_square = self.chi_square(resid_func, resid_args)
+        return chi_square
+
+    def plot_chi_square_surfs(self, 
+        atom_name, 
+        protons,
+        residual_type='hf', 
+        model_pic='model_free_parameters.pic', 
+        plots_directory='chi_square_surf/', 
+        sampler_resolution=100, 
+        surface_resolution=100):
+        '''
+        This function fits monoexponencial decays to intensities 
+        for the relaxometry data, experimental and calculated
+        '''
+
+        def apply_log(tag):
+            if 'tau' in tag:
+                return 'log'
+            else:
+                return 'linear'
+
+        def adpative_sampler_metric(x,y,z_x,z_y,dim1_bounds, dim2_bounds,dim1_scale, dim2_scale):
+
+            dim_1_co_ords = np.array([x[0], y[0]])
+            dim_2_co_ords = np.array([x[1], y[1]])
+
+            # rescale 
+            if dim1_scale == 'log':
+                dim_1_co_ords = np.log(dim_1_co_ords)
+           
+            if dim2_scale == 'log':
+                dim_2_co_ords = np.log(dim_2_co_ords)
+
+            # get the difference
+            dim1_diff = dim_1_co_ords[0] - dim_1_co_ords[1]
+            dim2_diff = dim_2_co_ords[0] - dim_2_co_ords[1]
+
+            # divide by the range
+            dim1_diff = dim1_diff/(dim1_bounds[0]-dim1_bounds[1])
+            dim2_diff = dim2_diff/(dim2_bounds[0]-dim2_bounds[1])
+
+            dim1_diff = dim1_diff**2
+            dim2_diff = dim2_diff**2
+
+            # final distance we use 
+            distance_measure = np.sqrt(dim1_diff + dim2_diff)
+
+            #esitmate the derivative 
+            derivative = z_x - z_y
+
+            return abs(distance_measure * derivative)
+
+        os.makedirs(plots_directory, exist_ok=True)
+
+        # load the model
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
+
+        #iterate over the data points, could maybe change this loop to give tag directly
+        for i in sorted_keys:
+            res_info = model_resinfo[i]
+            tag = utils.resinto_to_tag(*model_resinfo[i])
+            resid, resname, atom1, atom2 = res_info
+
+            current_param = models[tag].params
+            varriables = []
+            for var in current_param:
+                if current_param[var].vary ==True:
+                    varriables.append(var)
+
+            # get the args for the residual function
+            residual_args, residual_func = self.residual_selector(tag, residual_type, res_info)
+            
+            combinations = list(itertools.combinations(varriables, 2))
+            for comb in combinations:
+
+                print(i, comb)
+
+                parameters = current_param.valuesdict()
+                param1_tag = comb[0]
+                param1_best = current_param[param1_tag].value
+                param2_tag = comb[1]
+                param2_best = current_param[param2_tag].value
+
+                param1_min = current_param[param1_tag].min
+                param1_max = current_param[param1_tag].max
+
+                param2_min = current_param[param2_tag].min
+                param2_max = current_param[param2_tag].max
+
+                points = []
+                initial_evaluations = []
+
+                chi_square_args = (param1_tag, param2_tag, current_param, residual_args, residual_func)
+                
+                #do some logic for the args
+                dim1_scale = apply_log(param1_tag)
+                dim2_scale = apply_log(param2_tag)
+                
+                dim1_bounds = [param1_min, param1_max]
+                dim2_bounds = [param2_min, param2_max]
+                sampler_metric_args = [dim1_bounds, dim2_bounds ,dim1_scale, dim2_scale]
+                
+                x_values = [param1_min, param1_max, param1_best]
+                y_values = [param2_min, param2_max, param2_best]
+                
+                initial_points = []
+                for ii in x_values:
+                    for jj in y_values:
+                        initial_points.append([jj, ii])
+
+                initial_points = np.array(initial_points)
+
+                #Now we do the adaptive sampling
+                Sampler = adaptive.AdaptiveSampler(self.chi_square_surface_resid_wrapper,initial_points)
+                Sampler.objective_args = chi_square_args
+                Sampler.evalute_all_points()
+                Sampler.run_n_cycles(100)
+                Sampler.interpolate(resolution=sampler_resolution)
+                Sampler.user_metric = adpative_sampler_metric
+                Sampler.user_metric_args = sampler_metric_args
+
+                #Sampler.plot(f'{plots_directory}{resid}_{param1_tag}_{param2_tag}.pdf')
+
+                #now we want to interpolate the data we have and plot it
+                fig, (ax1, ax2) = plt.subplots(1, 2)
+                fig.suptitle(f'Residue: {resid} {param1_tag} {param2_tag}')
+                ax1.set_xlabel(f'{param1_tag}')
+                ax2.set_xlabel(f'{param1_tag}')
+                ax1.set_ylabel(f'{param2_tag}')
+                ax2.set_ylabel(f'{param2_tag}')
+
+                points = Sampler.points
+                values = Sampler.evaluated_objective_funtion
+                x = points[:,0]
+                y = points[:,1]
+
+                if dim1_scale == 'log':
+                    xgrid = np.geomspace(min(x), max(x),surface_resolution)
+                    ax1.set_xscale('log')
+                    ax2.set_xscale('log')
+                else:
+                    xgrid = np.linspace(min(x), max(x),surface_resolution)
+                
+                if dim2_scale == 'log':
+                    ygrid = np.geomspace(min(y), max(y),surface_resolution)
+                    ax1.set_yscale('log')
+                    ax2.set_yscale('log')
+                else:
+                    ygrid = np.linspace(min(y), max(y),surface_resolution)
+
+
+                xgrid, ygrid = np.meshgrid(xgrid, ygrid)
+                interpolate = scipy.interpolate.griddata((x,y),
+                        Sampler.evaluated_objective_funtion,
+                        (xgrid, ygrid),
+                        method='linear')
+                
+                # now we plot the surfaces
+                tri = scipy.spatial.Delaunay(Sampler.points)
+
+                X, Y = np.meshgrid(xgrid, ygrid)
+                levels = np.linspace(np.min(interpolate), np.max(interpolate), 50)
+
+                interpolate[np.isnan(interpolate)] = np.min(interpolate) - 1 
+                interpolate[np.isinf(interpolate)] = np.min(interpolate) - 1 
+
+
+                ax1.contourf(xgrid, ygrid, interpolate, levels=levels )
+                ax1.scatter(param2_best, param1_best, s=80, facecolors='none', edgecolors='r')
+                ax2.contourf(xgrid, ygrid, interpolate, levels=levels )
+                ax2.scatter(param2_best, param1_best, s=80, facecolors='none', edgecolors='r')
+                
+                ax2.triplot(points[:,0], points[:,1], tri.simplices)
+                ax2.plot(points[:,0], points[:,1], 'o')
+                
+                name = f'{plots_directory}/{resid}_{param1_tag}_{param2_tag}.pdf'
+                plt.tight_layout()
+                plt.savefig(name)
+                plt.close()
+            os.exit()
+
+    def emcee_valisation(self, 
+        atom_name, 
+        protons,
+        residual_type='hf', 
+        model_pic='model_free_parameters.pic', 
+        plots_directory='emcee/', 
+        sampler_resolution=100, 
+        surface_resolution=100):
+        '''
+        This function fits monoexponencial decays to intensities 
+        for the relaxometry data, experimental and calculated
+        '''
+
+        os.makedirs(plots_directory, exist_ok=True)
+
+        # load the model
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
+
+        #iterate over the data points, could maybe change this loop to give tag directly
+        for i in sorted_keys:
+            res_info = model_resinfo[i]
+            tag = utils.resinto_to_tag(*model_resinfo[i])
+            resid, resname, atom1, atom2 = res_info
+            current_param = models[tag].params
 
     def fit_proton_noes(self, atom_name1, protons, data_dir, fields, 
                         out_folder='proton_proton_buildup', 
@@ -1919,16 +2231,22 @@ class ModelFree():
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
         model_array = []
         model_err_array = []
+        vary_status = []
+
 
         print('sorted keys:', sorted_keys)
 
         for i in sorted_keys:
             values = [models_resid[i].params[j].value for j in models_resid[i].params]
             stds = [models_resid[i].params[j].stderr for j in models_resid[i].params]
+            vary = [models_resid[i].params[j].vary for j in models_resid[i].params]
+
             model_array.append(values)
             model_err_array.append(stds)
+            vary_status.append(vary)
 
         model_array = np.array(model_array)
+        vary_status = np.array(vary_status)
         model_err_array = np.array(model_err_array)
         
         #model_err_array[np.isnan(model_err_array)] = 0
@@ -1941,12 +2259,22 @@ class ModelFree():
         fig_width = math.ceil(number_of_params/3)
         fig, ax = plt.subplots(nrows=3, ncols=fig_width, figsize=(3*fig_width, 9))
         ax = ax.flatten()
+
         for i in range(number_of_params):
+
+            colors = []
+            for ii in vary_status.T[i]:
+                if ii == True:
+                    colors.append('#1f77b4')
+                else:
+                    colors.append('#ff7f0e')
+
+
 
             ax[i].set_ylabel(param_names[i])
             ax[i].set_xlabel('residue')
-            ax[i].errorbar(sorted_keys, model_array.T[i], yerr=model_err_array.T[i],fmt='o' )
-            
+            ax[i].errorbar(sorted_keys, model_array.T[i], yerr=model_err_array.T[i],fmt='|',color='k', zorder=1)
+            ax[i].scatter(sorted_keys, model_array.T[i], color=colors, zorder=2)
             if 'tau' in param_names[i]:
                 ax[i].set_yscale('log')
 
@@ -1963,7 +2291,8 @@ class ModelFree():
         fields_min=14, 
         fields_max=25, 
         plot_ranges=[[0,3.5], [10,35], [1, 1.9]], 
-        per_residue_prefix='hf_rates'):
+        per_residue_prefix='hf_rates',
+        plot_per_residue=True):
 
         # load the model
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
@@ -1990,27 +2319,6 @@ class ModelFree():
             model_r1, model_r2, model_noe = self.model_hf(models_resid[i].params,res_info, self.model_high_fields)
             model_r1_v2, model_r2_v2, model_noe_v2 = self.model_hf(models_resid[i].params,res_info, self.high_fields)
 
-            fig, (ax0, ax1, ax2) = plt.subplots(nrows=1, ncols=3, figsize=(12, 4))
-            ax0.set_title(f'R1 {i}')
-            ax0.errorbar(self.high_fields, self.r1[tag],yerr=self.r1_err[tag], fmt='o')
-            ax0.plot(self.model_high_fields, model_r1)
-            ax0.set_ylim(*plot_ranges[0])
-            ax0.set_xlabel('field (T)')
-            ax0.set_ylabel('R_{1}(Hz)')
-
-            ax1.set_title('R2')
-            ax1.errorbar(self.high_fields, self.r2[tag],yerr=self.r2_err[tag], fmt='o')
-            ax1.plot(self.model_high_fields, model_r2)
-            ax1.set_ylim(*plot_ranges[1])
-            ax1.set_xlabel('field (T)')
-            ax1.set_ylabel('R_{2} (Hz)')
-
-            ax2.set_title('NOE')
-            ax2.errorbar(self.high_fields, self.hetnoe[tag],yerr=self.hetnoe_err[tag], fmt='o')
-            ax2.plot(self.model_high_fields, model_noe)
-            ax2.set_ylim(*plot_ranges[2])
-            ax2.set_ylabel('I_{sat}/I_{0}')
-
             r1_exp_array.append(self.r1[tag])
             r2_exp_array.append(self.r2[tag])
             noe_array.append(self.hetnoe[tag])
@@ -2023,9 +2331,33 @@ class ModelFree():
             r2_model.append(model_r2_v2)
             noe_model.append(model_noe_v2)
 
-            plt.tight_layout()
-            plt.savefig(f"{per_residue_prefix}_{atom_name}_{resid}.pdf")
-            plt.close()
+            if plot_per_residue == True:
+
+                fig, (ax0, ax1, ax2) = plt.subplots(nrows=1, ncols=3, figsize=(12, 4))
+                ax0.set_title(f'R1 {i}')
+                ax0.errorbar(self.high_fields, self.r1[tag],yerr=self.r1_err[tag], fmt='o')
+                ax0.plot(self.model_high_fields, model_r1)
+                ax0.set_ylim(*plot_ranges[0])
+                ax0.set_xlabel('field (T)')
+                ax0.set_ylabel('R_{1}(Hz)')
+
+                ax1.set_title('R2')
+                ax1.errorbar(self.high_fields, self.r2[tag],yerr=self.r2_err[tag], fmt='o')
+                ax1.plot(self.model_high_fields, model_r2)
+                ax1.set_ylim(*plot_ranges[1])
+                ax1.set_xlabel('field (T)')
+                ax1.set_ylabel('R_{2} (Hz)')
+
+                ax2.set_title('NOE')
+                ax2.errorbar(self.high_fields, self.hetnoe[tag],yerr=self.hetnoe_err[tag], fmt='o')
+                ax2.plot(self.model_high_fields, model_noe)
+                ax2.set_ylim(*plot_ranges[2])
+                ax2.set_ylabel('I_{sat}/I_{0}')
+
+                plt.tight_layout()
+                plt.savefig(f"{per_residue_prefix}_{atom_name}_{resid}.pdf")
+                plt.close()
+
 
         fig, (ax0,ax1,ax2) = plt.subplots(nrows=3, ncols=1, figsize=(12, 8), sharex=True)
 
