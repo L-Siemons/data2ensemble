@@ -1783,30 +1783,46 @@ class ModelFree():
                 plt.close()
             os.exit()
 
-    def emcee_valisation(self, 
+    def emcee(self, 
         atom_name, 
-        protons,
         residual_type='hf', 
-        model_pic='model_free_parameters.pic', 
-        plots_directory='emcee/', 
-        sampler_resolution=100, 
-        surface_resolution=100):
+        model_pic='model_free_parameters_emcee.pic', 
+        plots_directory='emcee/'):
+
         '''
         This function fits monoexponencial decays to intensities 
         for the relaxometry data, experimental and calculated
         '''
 
         os.makedirs(plots_directory, exist_ok=True)
+        print(f'using the residual {residual_type}')
 
         # load the model
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
-
+        emcee_results = {}
         #iterate over the data points, could maybe change this loop to give tag directly
+        
         for i in sorted_keys:
             res_info = model_resinfo[i]
             tag = utils.resinto_to_tag(*model_resinfo[i])
             resid, resname, atom1, atom2 = res_info
             current_param = models[tag].params
+            residual_args, residual_func = self.residual_selector(tag, residual_type, res_info)
+
+            minner = Minimizer(residual_func, current_param, fcn_args=(residual_args))
+            result = minner.minimize(method='emcee')
+            report_fit(result)
+            emcee_results[tag] = result
+
+        if writeout == True:
+            with open(model_pic, 'wb') as handle:
+                pic.dump(emcee_results, handle)
+
+
+
+
+
+
 
     def fit_proton_noes(self, atom_name1, protons, data_dir, fields, 
                         out_folder='proton_proton_buildup', 
