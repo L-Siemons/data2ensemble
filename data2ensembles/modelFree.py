@@ -1786,7 +1786,8 @@ class ModelFree():
     def emcee(self, 
         atom_name, 
         residual_type='hf', 
-        model_pic='model_free_parameters_emcee.pic', 
+        model_pic='model_free_parameters.pic',
+        model_pic_emcee='model_free_parameters.pic', 
         plots_directory='emcee/'):
 
         '''
@@ -1815,7 +1816,7 @@ class ModelFree():
             emcee_results[tag] = result
 
         if writeout == True:
-            with open(model_pic, 'wb') as handle:
+            with open(model_pic_emcee, 'wb') as handle:
                 pic.dump(emcee_results, handle)
 
 
