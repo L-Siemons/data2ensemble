@@ -18,6 +18,8 @@ import scipy.interpolate
 
 import matplotlib
 import matplotlib.cm as cm
+from matplotlib.colors import LogNorm
+
 import multiprocessing as mp
 import pickle as pic
 import re
@@ -1072,7 +1074,7 @@ class ModelFree():
             If True then the best model is selected based on the bic. If False all models are returned
 
         '''
-        print(f'fitting {i} with method {minimistion_method}')
+        # print(f'fitting {i} with method {minimistion_method}')
         # get the atom info
         res_info = utils.get_atom_info_from_tag(i)
         resid, resname, atom1, atom2 = res_info
@@ -1604,14 +1606,34 @@ class ModelFree():
         chi_square = self.chi_square(resid_func, resid_args)
         return chi_square
 
-    def plot_chi_square_surfs(self, 
+    def chi_square_likelyhood(self, 
+        param1_value, 
+        param2_value, 
+        param1_name, 
+        param2_name, 
+        params, 
+        resid_args, 
+        resid_func,
+        chi_0,):
+
+        params = copy.copy(params.valuesdict())
+        params[param1_name] = param1_value
+        params[param2_name] = param2_value
+
+        resid_args = [params, *resid_args]
+        chi_square = self.chi_square(resid_func, resid_args)
+        likelyhood = np.e**(-(chi_square-chi_0)/2)
+        return likelyhood
+
+    def plot_chi_likelyhood_surfs(self, 
         atom_name, 
         protons,
         residual_type='hf', 
         model_pic='model_free_parameters.pic', 
         plots_directory='chi_square_surf/', 
-        sampler_resolution=100, 
-        surface_resolution=100):
+        sampler_resolution=200, 
+        surface_resolution=50, 
+        init_grid=10):
         '''
         This function fits monoexponencial decays to intensities 
         for the relaxometry data, experimental and calculated
@@ -1625,34 +1647,69 @@ class ModelFree():
 
         def adpative_sampler_metric(x,y,z_x,z_y,dim1_bounds, dim2_bounds,dim1_scale, dim2_scale):
 
-            dim_1_co_ords = np.array([x[0], y[0]])
-            dim_2_co_ords = np.array([x[1], y[1]])
+            # dim_1_co_ords = np.array([x[0], y[0]])
+            # dim_2_co_ords = np.array([x[1], y[1]])
 
-            # rescale 
-            if dim1_scale == 'log':
-                dim_1_co_ords = np.log(dim_1_co_ords)
+            # #rescale 
+            # if dim1_scale == 'log':
+            #     dim_1_co_ords = np.log(dim_1_co_ords)
            
-            if dim2_scale == 'log':
-                dim_2_co_ords = np.log(dim_2_co_ords)
+            # if dim2_scale == 'log':
+            #     dim_2_co_ords = np.log(dim_2_co_ords)
 
-            # get the difference
-            dim1_diff = dim_1_co_ords[0] - dim_1_co_ords[1]
-            dim2_diff = dim_2_co_ords[0] - dim_2_co_ords[1]
+            # # get the difference
+            # dim1_diff = dim_1_co_ords[0] - dim_1_co_ords[1]
+            # dim2_diff = dim_2_co_ords[0] - dim_2_co_ords[1]
 
-            # divide by the range
-            dim1_diff = dim1_diff/(dim1_bounds[0]-dim1_bounds[1])
-            dim2_diff = dim2_diff/(dim2_bounds[0]-dim2_bounds[1])
+            # # divide by the range
+            # dim1_diff = dim1_diff/(dim1_bounds[0]-dim1_bounds[1])
+            # dim2_diff = dim2_diff/(dim2_bounds[0]-dim2_bounds[1])
 
-            dim1_diff = dim1_diff**2
-            dim2_diff = dim2_diff**2
+            # dim1_diff = dim1_diff**2
+            # dim2_diff = dim2_diff**2
 
-            # final distance we use 
-            distance_measure = np.sqrt(dim1_diff + dim2_diff)
+            # #final distance we use 
+            # distance_measure = np.sqrt(dim1_diff + dim2_diff)
 
+            scalar = np.array([dim1_bounds[0]-dim1_bounds[1], dim2_bounds[0]-dim2_bounds[1]])
+            scalar = np.absolute(scalar)
+            # print(scalar)
+
+            x = x/scalar
+            y = y/scalar
+
+            distance_measure = np.linalg.norm(x-y)
             #esitmate the derivative 
             derivative = z_x - z_y
 
             return abs(distance_measure * derivative)
+
+        def adpative_sampler_transform(points, dim1_bounds, dim2_bounds):
+
+            new_points = []
+
+            scalar = np.array([dim1_bounds[0]-dim1_bounds[1], dim2_bounds[0]-dim2_bounds[1]])
+            scalar = np.absolute(scalar)*0.1
+            minimum =  np.array([np.min(dim1_bounds), np.min(dim2_bounds)])
+            for i in points:
+                new_points.append((i-minimum)/scalar)
+
+            return new_points
+
+        def get_stderr_bounds(best, params, tag):
+
+            # the smallest value
+            std = params[tag].stderr
+            minimum = best - std*2
+            maximum = best + std*2
+
+            if minimum < params[tag].min:
+                minimum = params[tag].min
+            
+            if maximum > params[tag].max:
+                maximum = params[tag].max
+
+            return minimum*0.9, maximum*1.1
 
         os.makedirs(plots_directory, exist_ok=True)
 
@@ -1674,12 +1731,16 @@ class ModelFree():
             # get the args for the residual function
             residual_args, residual_func = self.residual_selector(tag, residual_type, res_info)
             
+            # calculate chi minimum 
+            # chi_square_args = (param1_tag, param2_tag, current_param, residual_args, residual_func)
+            resid_args_with_params = [current_param, *residual_args]
+            chi_minimum = self.chi_square(residual_func, resid_args_with_params)
+
             combinations = list(itertools.combinations(varriables, 2))
             for comb in combinations:
 
                 print(i, comb)
 
-                parameters = current_param.valuesdict()
                 param1_tag = comb[0]
                 param1_best = current_param[param1_tag].value
                 param2_tag = comb[1]
@@ -1691,11 +1752,48 @@ class ModelFree():
                 param2_min = current_param[param2_tag].min
                 param2_max = current_param[param2_tag].max
 
+                #set up some axis for later on x_values for initial points of sampler and 
+                #xgrid for interpolation
+                para1_scale_max = param1_max*1.1
+                para1_scale_min = param1_min*0.9
+
+                para2_scale_max = param2_max*1.1
+                para2_scale_min = param2_min*0.9
+                fig, (ax1, ax2) = plt.subplots(1, 2, sharey=True)
+                fig.suptitle(f'Residue: {resid} {param1_tag} {param2_tag}')
+                
+                if 'tau' in comb[0]:
+                    x_values = np.geomspace(para1_scale_min, para1_scale_max,init_grid)
+                    xgrid = np.geomspace(para1_scale_min, para1_scale_max,surface_resolution)
+                    ax1.set_xscale('log')
+                    ax2.set_xscale('log')
+                else:            
+                    x_values = np.linspace(para1_scale_min, para1_scale_max,init_grid)
+                    xgrid = np.linspace(para1_scale_min, para1_scale_max,surface_resolution)
+
+                if 'tau' in comb[1]:
+                    y_values = np.geomspace(para2_scale_min, para2_scale_max,init_grid)
+                    ygrid = np.geomspace(para2_scale_min, para2_scale_max,surface_resolution)
+                    ax1.set_yscale('log')
+                    ax2.set_yscale('log')
+                else:   
+                    y_values = np.linspace(para2_scale_min, para2_scale_max,init_grid)                 
+                    ygrid = np.linspace(para2_scale_min, para2_scale_max,surface_resolution)
+
+                # param1_std = current_param[param1_tag].stderr
+                
+                # param1_min, param1_max = get_stderr_bounds(param1_best, current_param, param1_tag)
+                # param2_min, param2_max = get_stderr_bounds(param2_best, current_param, param2_tag)
+ 
+                # x_values = np.linspace(param1_min, param1_max,5)
+                # xgrid = np.linspace(param1_min, param1_max,surface_resolution)
+                
+                # y_values = np.linspace(param2_min, param2_max,5)                 
+                # ygrid = np.linspace(param2_min, param2_max,surface_resolution)
+
                 points = []
                 initial_evaluations = []
 
-                chi_square_args = (param1_tag, param2_tag, current_param, residual_args, residual_func)
-                
                 #do some logic for the args
                 dim1_scale = apply_log(param1_tag)
                 dim2_scale = apply_log(param2_tag)
@@ -1703,64 +1801,47 @@ class ModelFree():
                 dim1_bounds = [param1_min, param1_max]
                 dim2_bounds = [param2_min, param2_max]
                 sampler_metric_args = [dim1_bounds, dim2_bounds ,dim1_scale, dim2_scale]
-                
-                x_values = [param1_min, param1_max, param1_best]
-                y_values = [param2_min, param2_max, param2_best]
-                
+                sampler_points_transform_args = [dim1_bounds, dim2_bounds]
+
                 initial_points = []
                 for ii in x_values:
                     for jj in y_values:
-                        initial_points.append([jj, ii])
-
+                        initial_points.append([ii,jj])
+                
+                initial_points.append([param1_best, param2_best])
                 initial_points = np.array(initial_points)
 
+                likelyhood_args = (param1_tag, param2_tag, current_param, residual_args, residual_func, chi_minimum)
+
                 #Now we do the adaptive sampling
-                Sampler = adaptive.AdaptiveSampler(self.chi_square_surface_resid_wrapper,initial_points)
-                Sampler.objective_args = chi_square_args
-                Sampler.evalute_all_points()
-                Sampler.run_n_cycles(100)
-                Sampler.interpolate(resolution=sampler_resolution)
+                Sampler = adaptive.AdaptiveSampler(self.chi_square_likelyhood,initial_points)
+                Sampler.objective_args = likelyhood_args
                 Sampler.user_metric = adpative_sampler_metric
                 Sampler.user_metric_args = sampler_metric_args
-
-                #Sampler.plot(f'{plots_directory}{resid}_{param1_tag}_{param2_tag}.pdf')
+                
+                Sampler.points_transform = adpative_sampler_transform 
+                Sampler.points_transform_args = sampler_points_transform_args
+                
+                Sampler.evalute_all_points()
+                Sampler.run_n_cycles(sampler_resolution)
+                Sampler.interpolate(resolution=sampler_resolution)
 
                 #now we want to interpolate the data we have and plot it
-                fig, (ax1, ax2) = plt.subplots(1, 2)
-                fig.suptitle(f'Residue: {resid} {param1_tag} {param2_tag}')
-                ax1.set_xlabel(f'{param1_tag}')
-                ax2.set_xlabel(f'{param1_tag}')
-                ax1.set_ylabel(f'{param2_tag}')
-                ax2.set_ylabel(f'{param2_tag}')
 
                 points = Sampler.points
                 values = Sampler.evaluated_objective_funtion
                 x = points[:,0]
                 y = points[:,1]
 
-                if dim1_scale == 'log':
-                    xgrid = np.geomspace(min(x), max(x),surface_resolution)
-                    ax1.set_xscale('log')
-                    ax2.set_xscale('log')
-                else:
-                    xgrid = np.linspace(min(x), max(x),surface_resolution)
-                
-                if dim2_scale == 'log':
-                    ygrid = np.geomspace(min(y), max(y),surface_resolution)
-                    ax1.set_yscale('log')
-                    ax2.set_yscale('log')
-                else:
-                    ygrid = np.linspace(min(y), max(y),surface_resolution)
-
-
                 xgrid, ygrid = np.meshgrid(xgrid, ygrid)
+                
                 interpolate = scipy.interpolate.griddata((x,y),
                         Sampler.evaluated_objective_funtion,
-                        (xgrid, ygrid),
-                        method='linear')
+                        (xgrid, ygrid), method='linear')
                 
                 # now we plot the surfaces
-                tri = scipy.spatial.Delaunay(Sampler.points)
+                transformer_points = adpative_sampler_transform(Sampler.points, *sampler_points_transform_args)
+                tri = scipy.spatial.Delaunay(transformer_points)
 
                 X, Y = np.meshgrid(xgrid, ygrid)
                 levels = np.linspace(np.min(interpolate), np.max(interpolate), 50)
@@ -1768,20 +1849,93 @@ class ModelFree():
                 interpolate[np.isnan(interpolate)] = np.min(interpolate) - 1 
                 interpolate[np.isinf(interpolate)] = np.min(interpolate) - 1 
 
-
-                ax1.contourf(xgrid, ygrid, interpolate, levels=levels )
-                ax1.scatter(param2_best, param1_best, s=80, facecolors='none', edgecolors='r')
-                ax2.contourf(xgrid, ygrid, interpolate, levels=levels )
-                ax2.scatter(param2_best, param1_best, s=80, facecolors='none', edgecolors='r')
+                ax1.contourf(xgrid, ygrid, interpolate, levels=20, cmap='Blues')
+                ax1.scatter(param1_best, param2_best, s=20, facecolors='none', edgecolors='r')
+                
+                ax2.contourf(xgrid, ygrid, interpolate, levels=20, cmap='Blues' )
+                ax2.scatter(param1_best, param2_best, s=20, facecolors='none', edgecolors='r')
                 
                 ax2.triplot(points[:,0], points[:,1], tri.simplices)
                 ax2.plot(points[:,0], points[:,1], 'o')
+
+                ax1.set_xlabel(f'{param1_tag}')
+                ax1.set_ylabel(f'{param2_tag}')
+
+                ax2.set_xlabel(f'{param1_tag}')
+                ax2.set_ylabel(f'{param2_tag}')
                 
                 name = f'{plots_directory}/{resid}_{param1_tag}_{param2_tag}.pdf'
                 plt.tight_layout()
                 plt.savefig(name)
+                plt.close('all')
+
+
+    def plot_chi_square_surfs_brute(self, 
+        atom_name, 
+        protons,
+        residual_type='hf', 
+        model_pic='model_free_parameters.pic', 
+        plots_directory='chi_square_surf_brute/', 
+        brute_resolution=100, ):
+        '''
+        This function fits monoexponencial decays to intensities 
+        for the relaxometry data, experimental and calculated
+        '''
+
+        os.makedirs(plots_directory, exist_ok=True)
+
+        # load the model
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
+
+        #iterate over the data points, could maybe change this loop to give tag directly
+        for i in sorted_keys:
+            res_info = model_resinfo[i]
+            tag = utils.resinto_to_tag(*model_resinfo[i])
+            resid, resname, atom1, atom2 = res_info
+
+            current_param = models[tag].params
+            varriables = []
+            for var in current_param:
+                if current_param[var].vary ==True:
+                    varriables.append(var)
+            
+            combinations = list(itertools.combinations(varriables, 2))
+            
+            # the residual 
+            residual_args, residual_func = self.residual_selector(tag, residual_type, res_info)
+            for comb in combinations:
+
+                brute_params = copy.deepcopy(current_param)
+                for brute_p in brute_params:
+                    if brute_p in comb:
+                        brute_params[brute_p].vary = True
+                        brute_step = abs(brute_params[brute_p].max-brute_params[brute_p].min)/brute_resolution
+                        brute_params[brute_p].brute_step = brute_step
+                    else:
+                        brute_params[brute_p].vary = False
+
+                minner = Minimizer(residual_func, brute_params, fcn_args=(residual_args))
+                result = minner.minimize(method='brute')
+
+                grid_x, grid_y = (np.unique(par.ravel()) for par in result.brute_grid)
+
+                #now we want to interpolate the data we have and plot it
+                
+                plt.title(f'Residue: {resid} {comb[0]} {comb[1]}')
+                levels = np.geomspace(np.min(result.brute_Jout), np.max(result.brute_Jout), 100)
+                plt.contourf(grid_x, grid_y, result.brute_Jout.T, levels=levels , norm = LogNorm() )
+               
+                plt.xlabel(f'{comb[0]}')
+                plt.ylabel(f'{comb[1]}')
+                plt.colorbar()
+                plt.scatter(current_param[comb[0]].value, current_param[comb[1]].value)
+
+
+                name = f'{plots_directory}/{resid}_{comb[0]}_{comb[1]}.pdf'
+                plt.tight_layout()
+                plt.savefig(name)
                 plt.close()
-            os.exit()
+            
 
     def emcee(self, 
         atom_name, 
@@ -2502,6 +2656,7 @@ class ModelFree():
         fields_max=25, 
         plot_ranges=[[0,3.5], [10,35], [1, 1.9]], 
         folder='folder',
+        data_folder='data_for_figures/',
         model_pic='model_free_parameters.pic', 
         fancy=False,
         marker_size=15,
@@ -2518,6 +2673,11 @@ class ModelFree():
         except FileExistsError:
             pass 
 
+        try:
+            os.mkdir(data_folder)
+        except FileExistsError:
+            pass 
+
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
         low_fields = sorted(self.ShuttleTrajectory.experiment_info.keys())
         print('plotting relaxometry_intensities')
@@ -2525,7 +2685,15 @@ class ModelFree():
         norm = matplotlib.colors.Normalize(0, 10, clip=True)
         mapper = cm.ScalarMappable(norm=norm, cmap=cmap)
 
+        data = {}
+
         for i in tqdm(sorted_keys):
+
+            data[i] = {}
+            data[i]['r1'] = {}
+            data[i]['r2'] = {}
+            data[i]['noe'] = {}
+            data[i]['relaxometry_intensity'] = {}
 
             tag = utils.resinto_to_tag(*model_resinfo[i])
             res_info = model_resinfo[i]
@@ -2542,6 +2710,10 @@ class ModelFree():
             ax0.set_ylabel('$R_{1}$ (Hz)', fontsize=text_size)
             ax0.tick_params(axis='both', labelsize=tick_size)
 
+            data[i]['r1']['exp'] = [self.high_fields, self.r1[tag], self.r1_err[tag]]
+            data[i]['r1']['model'] = [self.model_high_fields, model_r1]
+            data[i]['r1']['model_hf_points'] = [self.high_fields, model_r1_v2]
+
             #ax1.set_title('$R_{2}$')
             ax1.errorbar(self.high_fields, self.r2[tag],yerr=self.r2_err[tag], fmt='|', zorder=2,)
             ax1.scatter(self.high_fields, self.r2[tag], edgecolor='black', zorder=3, s=marker_size)
@@ -2550,6 +2722,10 @@ class ModelFree():
             ax1.set_xlabel('Field (T)', fontsize=text_size)
             ax1.set_ylabel('$R_{2}$ (Hz)', fontsize=text_size)
             ax1.tick_params(axis='both', labelsize=tick_size)
+
+            data[i]['r2']['exp'] = [self.high_fields, self.r2[tag], self.r2_err[tag]]
+            data[i]['r2']['model'] = [self.model_high_fields, model_r2]
+            data[i]['r2']['model_hf_points'] = [self.high_fields, model_r2_v2]
 
             #ax2.set_title('$I_{sat}/I_{0}$')
             ax2.errorbar(self.high_fields, self.hetnoe[tag],yerr=self.hetnoe_err[tag], fmt='|', zorder=2)
@@ -2560,11 +2736,11 @@ class ModelFree():
             ax2.set_xlabel('Field (T)', fontsize=text_size)
             ax2.tick_params(axis='both', labelsize=tick_size)
 
+            data[i]['noe']['exp'] = [self.high_fields, self.hetnoe[tag], self.hetnoe_err[tag]]
+            data[i]['noe']['model'] = [self.model_high_fields, model_noe]
+            data[i]['noe']['model_hf_points'] = [self.high_fields, model_noe_v2]
 
             for f in low_fields:
-
-                # high field part 
-
 
                 color = mapper.to_rgba(f)
                 delays =  self.ShuttleTrajectory.experiment_info[f]['delays']
@@ -2586,6 +2762,10 @@ class ModelFree():
                 ax3.errorbar(delays, exp_intensity_scalled, yerr=exp_error_scalled,fmt='|', c=color,zorder=2)
                 ax3.scatter(delays, exp_intensity_scalled, color=color, label=f"{f:0.1f} T",edgecolor='black',zorder=3, s=marker_size)
 
+                data[i]['relaxometry_intensity'][f] = {}
+                data[i]['relaxometry_intensity'][f]['exp'] = [delays, exp_intensity_scalled, exp_error_scalled]
+                data[i]['relaxometry_intensity'][f]['model'] = [model_delays, model]
+
             #ax3.set_title('$Relaxometry$')
             ax3.set_ylabel('Intensity', fontsize=text_size)
             ax3.set_xlabel('delay (s)', fontsize=text_size)
@@ -2595,6 +2775,13 @@ class ModelFree():
             plt.savefig(f'{folder}_{tag}_together.pdf')
             plt.close()
 
+        pic_out = open(data_folder + 'hf_rates_lf_intensities.pic', 'wb')
+        pic.dump(data, pic_out)
+        pic_out.close()
+
+
+
+
     def plot_relaxometry_rates(self,
         atom_name,
         folder='relaxometry_plots',
@@ -2602,7 +2789,8 @@ class ModelFree():
         fancy=False,
         marker_size=15,
         text_size = 10,
-        tick_size=8):
+        tick_size=8, 
+        data_folder='data_for_figures/',):
 
         if fancy == True:
             plt.style.use(['science','nature'])
@@ -2611,11 +2799,18 @@ class ModelFree():
             os.mkdir(folder)
         except FileExistsError:
             pass 
+        
+        try:
+            os.mkdir(data_folder)
+        except FileExistsError:
+            pass 
 
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
         print('plotting relaxometry_intensities')
-
+        data = {}
         for i in tqdm(sorted_keys):
+
+            data[i] = {}
 
             tag = utils.resinto_to_tag(*model_resinfo[i])
             res_info = model_resinfo[i]
@@ -2624,6 +2819,7 @@ class ModelFree():
             fig, (ax0) = plt.subplots(nrows=1, ncols=1, figsize=(4, 4))
 
             ax0.plot(self.model_all_fields, model_r1, zorder=1, c='C2', label='Simulated $R_1$')
+            data[i]['hf_model'] = [self.model_all_fields, model_r1]
             values = self.relaxometry_mono_exp_fits[tag]
             err = self.relaxometry_mono_exp_fits_err[tag]
 
@@ -2633,14 +2829,16 @@ class ModelFree():
             ax0.set_title(tag)
             ax0.errorbar(self.low_fields, values,yerr=err, fmt='|', zorder=2, c='C1')
             ax0.scatter(self.low_fields, values, edgecolor='black', zorder=3, s=marker_size, c='C1', label='Low field $R_{1,exp}^{apparent}$')
+            data[i]['lf_exp'] = [self.low_fields, values, err]
 
             ax0.errorbar(self.low_fields, values_calc,yerr=err_calc, fmt='|', zorder=2, c='C4')
             ax0.scatter(self.low_fields, values_calc, edgecolor='black', zorder=3, s=marker_size, c='C4', label='Low field $R_{1,calc}^{apparent}$')
-
+            data[i]['lf_calc'] = [self.low_fields, values_calc, err_calc]
 
             ax0.errorbar(self.high_fields, self.r1[tag],yerr=self.r1_err[tag], fmt='|', zorder=2)
             ax0.scatter(self.high_fields, self.r1[tag], edgecolor='black', zorder=3, s=marker_size, c='C3', label='High Field $R_1$')
-
+            data[i]['hf'] = [self.high_fields, self.r1[tag], self.r1_err[tag]]
+            
             ax0.set_xlabel('Field (T)', fontsize=text_size)
             ax0.set_ylabel('$R_{1}^{app}$ (Hz)', fontsize=text_size)
             ax0.tick_params(axis='both', labelsize=tick_size)
@@ -2651,6 +2849,10 @@ class ModelFree():
             plt.tight_layout()
             plt.savefig(f'{folder}_{tag}_together.pdf')
             plt.close()
+        
+        pic_out = open(data_folder + 'lf_rates.pic', 'wb')
+        pic.dump(data, pic_out)
+        pic_out.close()
 
     def plot_relaxometry_intensities(self,atom_name, protons,model_pic='model_free_parameters.pic',folder='relaxometry_intensities/'):
 
@@ -2686,6 +2888,42 @@ class ModelFree():
                 plt.legend()
                 plt.savefig(f'{folder}field_{f}_{tag}.pdf')
                 plt.close()
+
+    def write_out_correction_factors(self,atom_name,
+        prefix='',
+        model_pic='model_free_parameters.pic'):
+
+        models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
+        print('plotting relaxometry_intensities')
+        out = open(prefix + 'correction_factors.dat', 'w')
+        fields_string = ' '.join([str(a) for a in self.low_fields])
+        out.write(f'# {fields_string}\n')
+        correction_factors_list = []
+        for i in tqdm(sorted_keys):
+
+            tag = utils.resinto_to_tag(*model_resinfo[i])
+            res_info = model_resinfo[i]
+            model_r1, model_r2, model_noe = self.model_hf(models_resid[i].params,res_info, self.model_all_fields)
+
+            values = self.relaxometry_mono_exp_fits[tag]
+            model_r1, model_r2, model_noe = self.model_hf(models_resid[i].params,res_info, np.array(self.low_fields))
+
+            correction_factors = model_r1/values
+            correction_factors_list.append(correction_factors)
+            correction_string = '\t'.join([f'{a:0.3f}' for a in correction_factors])
+            out.write(f'{tag}    {correction_string}\n')
+
+        correction_factors = np.array(correction_factors_list)
+        mean_correction_factors = np.mean(correction_factors, axis=0)
+        std_correction_factors = np.std(correction_factors, axis=0)
+
+        correction_string = '\t'.join([f'{a:0.3f}' for a in mean_correction_factors])
+        out.write(f'mean_correction_factors    {correction_string}\n')
+
+        correction_string = '\t'.join([f'{a:0.3f}' for a in std_correction_factors])
+        out.write(f'std_correction_factors    {correction_string}\n')
+        
+        out.close()
 
 # def generate_mf_parameters(dx,dy,dz,scale_diffusion=False, diffusion=None):
 #     if scale_diffusion == False:
