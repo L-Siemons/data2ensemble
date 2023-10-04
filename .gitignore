@@ -1,0 +1,16 @@
+.DS_Store
+build/
+data2ensembles.egg-info/
+data2ensembles/.DS_Store
+data2ensembles/__pycache__/
+data2ensembles/mathFuncs.c
+data2ensembles/mathFuncs.cpython-310-darwin.so
+data2ensembles/relaxation_matricies.c
+data2ensembles/spectralDensity.c
+dist/
+scripts/5uzd.cif
+scripts/5uzd.pdb
+scripts/make_relaxometry_fields_file.py
+scripts/minotour_scripts/
+todo.txt
+token.txt
