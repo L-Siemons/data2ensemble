@@ -4,6 +4,7 @@ from tqdm import tqdm
 import scipy 
 import scipy.spatial
 import matplotlib.pyplot as plt
+import random
 
 class AdaptiveSampler():
     def __init__(self, func, initial_points):
@@ -15,6 +16,8 @@ class AdaptiveSampler():
         self.objective_args = []
         self.user_metric = None
         self.user_metric_args = []
+        self.points_transform = None 
+        self.points_transform_args = []
         
     def evalute_all_points(self):
         
@@ -25,6 +28,24 @@ class AdaptiveSampler():
         
         self.evaluated_objective_funtion = np.array(self.evaluated_objective_funtion)
     
+    def calculate_area_of_triangle(self, point1, point2, point3):
+        # Convert the points to NumPy arrays for easier calculations
+        p1 = np.array(point1)
+        p2 = np.array(point2)
+        p3 = np.array(point3)
+
+        # Calculate two vectors in the plane of the triangle
+        vector1 = p2 - p1
+        vector2 = p3 - p1
+
+        # Calculate the cross product of the two vectors
+        cross_product = np.cross(vector1, vector2)
+
+        # The magnitude of the cross product is the area of the triangle
+        area = 0.5 * np.linalg.norm(cross_product)
+
+        return area
+
     def less_first(self, a, b):
         return [a,b] if a < b else [b,a]
 
@@ -34,16 +55,25 @@ class AdaptiveSampler():
         return abs_gradient * dist 
 
     def metric_wrapper(self, x,y,z_x,z_y):
-
+        # print('here,', self.user_metric)
         if self.user_metric == None:
             return self.metric(x,y,z_x,z_y)
         else:
             return self.user_metric(x,y,z_x,z_y, *self.user_metric_args)
-    
-    def one_cycle(self):
-        
+
+    def get_delaunay(self,):
         # do the transform
-        tri = scipy.spatial.Delaunay(self.points)
+        if self.points_transform == None:
+            t_points = self.points  
+        else:
+            t_points = self.points_transform(self.points, *self.points_transform_args )
+
+        tri = scipy.spatial.Delaunay(t_points)
+        return tri, t_points
+
+    def get_delaunay_edges(self):
+
+        tri, t_points = self.get_delaunay()
         
         # get all the edges
         list_of_edges = []
@@ -53,13 +83,32 @@ class AdaptiveSampler():
         
         # take the unique ones
         array_of_edges = np.unique(list_of_edges, axis=0)
+        return array_of_edges
+
+    def get_triangle_z_angle(self, p1, p2, p3):
+
+        vector1 = p2 - p1
+        vector2 = p3 - p1
+        z_axis_vector = np.array([0,0,1])
+
+        # norm to triangle
+        plane_norm = np.cross(vector1, vector2)
+        plane_norm = plane_norm / np.linalg.norm(plane_norm)
+        
+        # angle 
+        angle = np.arccos(np.dot(z_axis_vector, plane_norm))
+        return angle
+
+    def one_cycle(self):
+
+        array_of_edges = self.get_delaunay_edges()
         
         # get the points with the highest score
         pairs = []
         list_of_metric = []
         for p1,p2 in array_of_edges:
-            x = tri.points[p1]
-            y = tri.points[p2]
+            x = self.points[p1]
+            y = self.points[p2]
             pairs.append([x,y])
             z_x = self.evaluated_objective_funtion[p1]
             z_y = self.evaluated_objective_funtion[p2]
@@ -72,11 +121,39 @@ class AdaptiveSampler():
         new_evaluated_point = self.objective(new_point[0], new_point[1], *self.objective_args)
         
         return new_point, new_evaluated_point
+
+    def one_cycle_area(self,):
+
+        tri, t_points = self.get_delaunay()
+        expanded_evalutated_points = np.expand_dims(self.evaluated_objective_funtion, axis=1)
+        point_function = np.hstack([self.points, expanded_evalutated_points])
+
+        point_sets = []
+        areas = []
+
+        for triangle in tri.simplices:
+            current_points = [point_function[i] for i in triangle]            
+            point_sets.append(current_points)
+            current_area = self.calculate_area_of_triangle(*current_points)
+            current_angle = self.get_triangle_z_angle(*current_points)
+            metric = current_area*current_angle # switch*current_area + (1-switch)*current_area*current_angle
+            areas.append(metric)
+
+        # index for new point
+        max_area_index = np.argmax(areas)
+        # selected_points_index = random.choices(list(range(len(point_sets))), weights=areas)
+        selected_points = point_sets[max_area_index]
+
+        triangle_center = np.sum(selected_points, axis=0)/len(selected_points)
+        new_point = np.array([triangle_center[0], triangle_center[1]])
+        new_evaluated_point = self.objective(new_point[0], new_point[1], *self.objective_args)
+        return new_point, new_evaluated_point
     
+
     def run_n_cycles(self, cycles):
         
-        for i in range(cycles):
-            new_point, new_evaluated_point = self.one_cycle()
+        for i in tqdm(range(cycles)):
+            new_point, new_evaluated_point = self.one_cycle_area()
             self.points = np.vstack([self.points, new_point])
             hstack = [self.evaluated_objective_funtion, new_evaluated_point]
             self.evaluated_objective_funtion = np.hstack(hstack)            
@@ -94,7 +171,7 @@ class AdaptiveSampler():
         interpolate = scipy.interpolate.griddata((x,y),
                         self.evaluated_objective_funtion,
                         (xgrid, ygrid),
-                        method='linear')
+                        method='cubic')
         
         self.interpolate_surface = interpolate
         self.interpolate_axis = [xgrid, ygrid]
