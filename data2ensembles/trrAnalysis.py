@@ -456,6 +456,11 @@ class AnalyseTrr():
             command = command + f' -e {e} '
         if dt != None:
             command = command + f' -dt {dt}'
+        # else:
+        #     #so we can use it in the csa rotacf function if needed
+        #     dt = 1e-12
+
+
         print(f'Running the command: \n {command}')
         os.system(command)
 
@@ -532,8 +537,20 @@ class AnalyseTrr():
             # Chemical Shift Anisotropy Tensors of Carbonyl, Nitrogen, and Amide 
             # Proton Nuclei in Proteins through Cross-Correlated Relaxation in NMR Spectroscopy
 
+            if b != None:
+                csa_start = int(b)
+                print(f'b {b}')
+            else:
+                csa_start = 0
+
+            if e != None:
+                csa_end = int(e)
+                print(f'e {e}')
+            else:
+                csa_end = -1
+
             print('Collecting CSA Principle axis possitions:')
-            for ts in tqdm(self.uni.trajectory[::csa_tcf_skip]):
+            for ts in tqdm(self.uni.trajectory[csa_start:csa_end:csa_tcf_skip]):
                 time = self.uni.trajectory.time
 
                 for indx , (res1, res2, atom_name1, atom_name2)  in enumerate(self.gmx_atom_info):
@@ -1177,8 +1194,8 @@ class AnalyseTrr():
             x = temp.T[0]
             y = temp.T[1]
 
-            y = y[x<threshold][::100]
-            x = x[x<threshold][::100]
+            y = y[x<threshold]
+            x = x[x<threshold]
 
             atom1_poss = self.uni.select_atoms(f'resid {res1} and name {atom_name1}')[0].position
             atom2_poss = self.uni.select_atoms(f'resid {res2} and name {atom_name2}')[0].position
@@ -1691,7 +1708,7 @@ class AnalyseTrr():
 
     def fit_diffusion_to_r1_r2_hetnoe(self, r1_file, r1_error, r2_file, r2_error, hetNoe_file, hetNoe_errors, spectral_density_file,
                                       fields,x, y='h', blocks=False,dna=False, write_out=False, reduced_noe=False,
-                                      error_filter=0.05, PhysQ=PhysQ, model="anisotropic", scale_model='default'):
+                                      error_filter=0.05, PhysQ=PhysQ, model="anisotropic", scale_model='default', out_name= "diffusion_tensor_fitted.dat"):
     
         def resid(params, values, errors, csa, bondlength, cosine_angles, spec_params, fields, csa_cosine_angles, csa_params):
 
@@ -1877,7 +1894,7 @@ class AnalyseTrr():
         diso = (res_params['dx'].value + res_params['dy'].value + res_params['dz'].value)/3
         iso_tc = 1/(6*diso)
         print(f'isotropic tau c: {iso_tc * 1e9:0.2} ns' )
-        self.write_diffusion_trace(res_params, "diffusion_tensor_fitted.dat")
+        self.write_diffusion_trace(res_params, out_name)
 
     # def fit_emf_to_spectral_density(self, atom_names, spectral_density_file, diffusion_file, omega_range=[1e-5, 4e9], omega_number_of_steps=1e3):
 
