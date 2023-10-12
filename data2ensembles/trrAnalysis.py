@@ -1039,7 +1039,7 @@ class AnalyseTrr():
 
     def fit_all_correlation_functions(self,
         atom_names, time_threshold=10e-9,
-        log_time_min=50, log_time_max=5000,blocks=True, calc_csa_tcf=False, 
+        log_time_min=5e-13, log_time_max=10e-9,blocks=True, calc_csa_tcf=False, 
         ignore_list=[], csa_ignore_list=[]):
 
         def write_line_to_params_files(values, file, curve_count=self.curve_count):
@@ -1057,6 +1057,12 @@ class AnalyseTrr():
         atom_info = self.make_atom_pairs_list(atom_names)
         atom1 = atom_names[0][0]
         atom2 = atom_names[0][1]
+
+        acf_fitting_kws = {
+        'log_time_min' : log_time_min, 
+        'log_time_max' : log_time_max
+
+        }
 
         try:
             os.mkdir(f'{self.path_prefix}_fits')
@@ -1118,7 +1124,7 @@ class AnalyseTrr():
                     x = x[x<time_threshold]
 
                     #print('starting fit ...')
-                    result = self.fit_correlation_function(x,y)
+                    result = self.fit_correlation_function(x,y, **acf_fitting_kws)
                     values = result.params.valuesdict()
 
                     #put the plotting in!
@@ -1140,9 +1146,9 @@ class AnalyseTrr():
                             time = time[time < time_threshold]
 
                             # fit the CSA c(t)s
-                            result_xx = self.fit_correlation_function(time,ct_xx)
-                            result_yy = self.fit_correlation_function(time,ct_yy)
-                            result_xy = self.fit_correlation_function(time,ct_xy, theta=np.pi/2)
+                            result_xx = self.fit_correlation_function(time,ct_xx, **acf_fitting_kws)
+                            result_yy = self.fit_correlation_function(time,ct_yy, **acf_fitting_kws)
+                            result_xy = self.fit_correlation_function(time,ct_xy, theta=np.pi/2, **acf_fitting_kws)
                             
                             # make vaues dicts
                             values_xx = result_xx.params.valuesdict()
