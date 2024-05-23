@@ -60,7 +60,9 @@ class PhysicalQuantities(object):
 
         #def read in bond lengths
         self.bondlengths = {}
-        file = pkg_resources.resource_filename('data2ensembles', 'dat/dft_bond_lengths_v2.dat')
+        # file = pkg_resources.resource_filename('data2ensembles', 'dat/dft_bond_lengths_v2.dat')
+        # file = pkg_resources.resource_filename('data2ensembles', 'dat/dft_bond_lengths_v2.dat')
+        file = pkg_resources.resource_filename('data2ensembles', 'dat/bond_lengths.dat')
         file = open(file, 'r')
         for i in file.readlines():
             if i[0] != '#':
