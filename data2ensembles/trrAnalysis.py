@@ -25,6 +25,8 @@ import pickle as pic
 from lmfit import Minimizer, Parameters, report_fit
 from tqdm import tqdm
 import enlighten
+import toml
+import itertools
 
 import scipy
 import scipy.fft
@@ -1037,33 +1039,13 @@ class AnalyseTrr():
         report_fit(result)
         return result
 
-    def fit_all_correlation_functions(self,
-        atom_names, time_threshold=10e-9,
-        log_time_min=5e-13, log_time_max=10e-9,blocks=True, calc_csa_tcf=False, 
-        ignore_list=[], csa_ignore_list=[]):
-
-        def write_line_to_params_files(values, file, curve_count=self.curve_count):
-
-            amps = [str(values['amp_%i'%(i+1)]) for i in range(curve_count)]
-            amps = ','.join(amps)
-            times = [str(values['time_%i'%(i+1)]) for i in range(curve_count)]
-            times = ','.join(times)
-            slong = values['S_long']
-            line = f'{res1}:{atom_name1},{atom_name2}:{slong}:{amps}:{times}\n'
-            file.write(line)
-            file.flush()
-
-
-        atom_info = self.make_atom_pairs_list(atom_names)
-        atom1 = atom_names[0][0]
-        atom2 = atom_names[0][1]
-
-        acf_fitting_kws = {
-        'log_time_min' : log_time_min, 
-        'log_time_max' : log_time_max
-
-        }
-
+    def make_correlation_fit_directories(self,):
+        
+        '''
+        This function makes the directories used by functions that fit 
+        the correlation functions
+        '''
+        
         try:
             os.mkdir(f'{self.path_prefix}_fits')
         except FileExistsError:
@@ -1079,14 +1061,41 @@ class AnalyseTrr():
         except FileExistsError:
             pass
 
+    def write_line_to_params_files(self, values, file):
+        '''
+        This function is used by fit_all_correlation_functions_dipolar and 
+        fit_all_correlation_functions_csa
+        to write out the fitted parameters
+        '''
+
+        amps = [str(values['amp_%i'%(i+1)]) for i in range(self.curve_count)]
+        amps = ','.join(amps)
+        times = [str(values['time_%i'%(i+1)]) for i in range(self.curve_count)]
+        times = ','.join(times)
+        slong = values['S_long']
+        line = f'{res1}:{atom_name1},{atom_name2}:{slong}:{amps}:{times}\n'
+        file.write(line)
+        file.flush()
+
+
+    def fit_all_correlation_functions_dipolar(self,
+        atom_names, time_threshold=10e-9,
+        log_time_min=5e-13, log_time_max=10e-9,blocks=True, calc_csa_tcf=False, 
+        ignore_list=[], csa_ignore_list=[]):
+
+        acf_fitting_kws = {
+        'log_time_min' : log_time_min, 
+        'log_time_max' : log_time_max
+        }
+
+        atom_info = self.make_atom_pairs_list(atom_names)
+        atom1 = atom_names[0][0]
+        atom2 = atom_names[0][1]
+
         if blocks==True:
             block_count = self.get_number_of_blocks(atom_names)
         else:
             block_count = 1
-
-        #manager = enlighten.get_manager()
-        #blocks_pbar = manager.counter(total=block_count, desc="Blocks", unit="Ticks", color="red")
-        #residues_pbar = manager.counter(total=len(self.uni.residues)*block_count, desc="residues", unit="Tocks", color="blue")
 
         for block in range(block_count):
 
@@ -1097,8 +1106,6 @@ class AnalyseTrr():
                 params_out_csa_xy = open(f'{self.path_prefix}_fit_params/internal_csa_xy_correlations_{block}.dat', 'w')
 
             params_out.write('# residue:atoms:S2:amps:times\n')
-            
-            
             for res1, res2, atom_name1, atom_name2 in atom_info:
 
                 #file IO
@@ -1134,6 +1141,41 @@ class AnalyseTrr():
                     #residues_pbar.update()
                     write_line_to_params_files(values, params_out)
 
+        params_out.close()
+
+    def fit_all_correlation_functions_csa(self,
+        atom_names, time_threshold=10e-9,
+        log_time_min=5e-13, log_time_max=10e-9,blocks=True, calc_csa_tcf=False, 
+        ignore_list=[], csa_ignore_list=[]):
+
+        acf_fitting_kws = {
+        'log_time_min' : log_time_min, 
+        'log_time_max' : log_time_max
+        }
+
+        atom_info = self.make_atom_pairs_list(atom_names)
+        atom1 = atom_names[0][0]
+        atom2 = atom_names[0][1]
+
+        if blocks==True:
+            block_count = self.get_number_of_blocks(atom_names)
+        else:
+            block_count = 1
+
+        for block in range(block_count):
+
+            params_out = open(f'{self.path_prefix}_fit_params/internal_correlations_{block}.dat', 'w')
+            if calc_csa_tcf == True:
+                params_out_csa_xx = open(f'{self.path_prefix}_fit_params/internal_csa_xx_correlations_{block}.dat', 'w')
+                params_out_csa_yy = open(f'{self.path_prefix}_fit_params/internal_csa_yy_correlations_{block}.dat', 'w')
+                params_out_csa_xy = open(f'{self.path_prefix}_fit_params/internal_csa_xy_correlations_{block}.dat', 'w')
+
+            params_out.write('# residue:atoms:S2:amps:times\n')
+            for res1, res2, atom_name1, atom_name2 in atom_info:
+
+                #file IO
+                if [atom_name1, atom_name2] not in ignore_list:
+
                     if calc_csa_tcf == True:
                         if (atom_name1, atom_name2) not in csa_ignore_list:
                             csa_name = f'{self.path_prefix}_rotacf/csa_ct_{res1}_{atom_name1}.xvg'
@@ -1166,12 +1208,32 @@ class AnalyseTrr():
                                 self.plot_csa_tcfs(values, time, cts, block, res1, atom_name1)
 
             #close the parameter files!
-            params_out.close()
             if calc_csa_tcf == True:
                 params_out_csa_xx.close()
                 params_out_csa_yy.close()
                 params_out_csa_xy.close()
-    
+
+
+    def fit_all_correlation_functions(self,
+        atom_names, time_threshold=10e-9,
+        log_time_min=5e-13, log_time_max=10e-9,blocks=True, calc_csa_tcf=False, 
+        ignore_list=[], csa_ignore_list=[]):
+
+        kws = {'time_threshold': time_threshold,
+        'log_time_min' : log_time_min, 
+        'log_time_max': log_time_max,
+        'blocks':blocks, 
+        'calc_csa_tcf':calc_csa_tcf, 
+        'ignore_list':ignore_list, 
+        'csa_ignore_list':csa_ignore_list}
+
+
+        # fit all the dipolar parts 
+        self.fit_all_correlation_functions_dipolar(atom_names, **kws)
+
+        # fit all the dipolar csa parts
+        fit_all_correlation_functions_csa(atom_names,**kws)
+
     def fit_diffusion_tensor(self, atom_names, blocks=True, threshold=50e-9, timestep=2e-12):
         '''
         Here we fit the diffusion tensor to the rotational correlation functions with 
@@ -1480,7 +1542,8 @@ class AnalyseTrr():
                 atom_check = True
                 x_spin = "C1'"
                 y_spin = "H1'"                
-                active_protons = ["H1'", "H2'1","H2'2"] 
+                active_protons = ["H1'", "H2'1","H2'2", "H3'"] 
+                #active_protons = ["H1'", "H2'1", "H2'2","H3'", "H4'"]
                 passive_protons = active_protons
                 operator_size = 1+1 + len(active_protons)*2
 
@@ -1966,7 +2029,7 @@ class AnalyseTrr():
     #     with open(fit_results_pickle_file, 'wb') as handle:
     #         pic.dump(emf_models, handle)
 
-    def fit_emf_correlation_to_md(self, atom_names, diffusion_file, time_max=20e-9, ignore_list=(), sv=False):
+    def fit_emf_correlation_to_md(self, atom_names, diffusion_file,mf_config,  time_max=20e-9, ignore_list=(), sv=False):
 
         atom_info = self.make_atom_pairs_list(atom_names)
         dval, diffusion_errors = utils.read_diffusion_tensor(diffusion_file)
@@ -1985,7 +2048,7 @@ class AnalyseTrr():
 
             if [atom_name1, atom_name2] not in ignore_list:
                 name = f"{self.path_prefix}_rotacf/rotacf_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
-                pdf_name =f'{self.path_prefix}_rotacf/correlation_func_{res1}_{atom_name1}_{res2}_{atom_name2}.pdf'
+                pdf_name =f'{self.path_prefix}_rotacf/correlation_func_{res1}_{atom_name1}_{res2}_{atom_name2}_check.pdf'
                 temp = self.read_gmx_xvg(name) 
 
                 x = temp.T[0]
@@ -2002,7 +2065,9 @@ class AnalyseTrr():
                 ex,ey,ez = self.cosine_angles[angles_key]
                 args = (x,ex,ey,ez)
 
-                model_params = mf.generate_mf_parameters(*dval, scale_diffusion=False, diffusion=dval)
+                model_free_class = mf.ModelFree(*dval, mf_config=mf_config)
+
+                model_params = model_free_class.generate_mf_parameters(scale_diffusion=False)
                 c0, _, _ = correlation_functions.correlation_anisotropic_emf(model_params[0], args)
                 md_with_diff = y * c0
                 mod = model_params[-1]
@@ -2016,6 +2081,9 @@ class AnalyseTrr():
                 report_fit(result)
 
                 current_model_0, mod_internal, mod_total = model(emf_models[angles_key].params, args)
+
+                plt.plot(x,y, label='raw MD')
+
                 plt.plot(x,c0, label='c0')
                 plt.plot(x,md_with_diff, label='total')
                 plt.plot(x,y,label='internal')
@@ -2033,7 +2101,249 @@ class AnalyseTrr():
         except FileExistsError:
             pass
 
-        fit_results_pickle_file = f'{self.path_prefix}_emf_fit/emf_params_from_correlations.pic'
+        fit_results_pickle_file = f'{self.path_prefix}_emf_fit/emf_params_from_correlations_check.pic'
+        with open(fit_results_pickle_file, 'wb') as handle:
+            pic.dump(emf_models, handle)
+
+    def fit_emf_correlation_to_md_internal_only(self, 
+        atom_names, 
+        time_max=0.5e-9, 
+        ignore_list=(), 
+        fit_config='emf_to_md_correlation_function.toml',
+        sv=False):
+
+        atom_info = self.make_atom_pairs_list(atom_names)
+        emf_models = {}
+
+        def model(params, time, sv):
+            internal = correlation_functions.correlation_emf_internal_only(params, time, sv=sv)
+            return internal
+
+        def resid(params, time, target, sv):
+            internal_model = model(params, time, sv)
+            return (internal_model - target)/(time*1e6 + 0.01) 
+
+        fitting_starting_conditions = toml.load(fit_config)
+
+        for res1, res2, atom_name1, atom_name2 in tqdm(atom_info):
+
+            if [atom_name1, atom_name2] not in ignore_list:
+                
+                name = f"{self.path_prefix}_rotacf/rotacf_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
+                pdf_name =f'{self.path_prefix}_rotacf/correlation_func_{res1}_{atom_name1}_{res2}_{atom_name2}_internal.pdf'
+                temp = self.read_gmx_xvg(name) 
+
+                x = temp.T[0]
+                y = temp.T[1]
+
+                y = y[x<time_max]
+                x = x[x<time_max]
+
+                if sv == True:
+                    y = y[x>0.]
+                    x = x[x>0.]
+
+                key = (res1, atom_name1, res2, atom_name2)
+
+                Ss_grid = np.linspace(0.4, 1, 4)
+                Sf_grid = np.linspace(0.4, 1, 4)
+                tau_f = np.geomspace(1e-13, 1e-9, 10)
+                tau_s = np.geomspace(0.5e-9, 10e-9, 10)
+
+                if sv == True:
+                    sv_array = np.linspace(0.7, 1, 10)
+                else:
+                    sv_array = np.array([1.])
+
+                print('doing the grid search')
+                lowest_rmsd = 1e100
+
+                for i in itertools.product(Ss_grid, Sf_grid, tau_f, tau_s, sv_array):
+                    Ss_curr, Sf_curr, tau_f_curr, tau_s_curr, Sv_current = i
+                    if tau_f_curr < tau_s_curr:
+                        values = {
+                        'tau_f':tau_f_curr, 
+                        'tau_s':tau_s_curr,
+                        'Ss': Ss_curr, 
+                        'Sf': Sf_curr,}
+
+                        if sv == True:
+                            values['Sv'] = Sv_current
+
+                        rmsd_current = resid(values, x, y, sv)
+                        rmsd_current = np.sum(rmsd_current**2)
+
+                        if rmsd_current < lowest_rmsd:
+                            best_model = i
+                            lowest_rmsd = rmsd_current
+
+                Ss_best, Sf_best, tau_f_best, tau_s_best, Sv_best = best_model
+
+                print(best_model)
+
+                params = Parameters()
+                params.add('tau_f', value=tau_f_best, min=0, max=1e-9)
+                params.add('tau_s', value=tau_s_best, min=0, max=5e-9)
+                params.add('Ss', value=Ss_best, min=0.4, max=1)
+                params.add('Sf', value=Sf_best, min=0.4, max=1)
+
+                if sv == True:
+                    params.add('Sv', min=0, max=1, value=Sv_best)
+
+                minner = Minimizer(resid, params, fcn_args=(x, y, sv))
+                result = minner.minimize(method="powel")
+                emf_models[key] = result
+                #report_fit(result)
+
+                tauf = result.params['tau_f'].value * 1e12
+                taus = result.params['tau_s'].value * 1e9
+
+                Ss = result.params['Ss'].value
+                Sf = result.params['Sf'].value
+
+                mod_internal = model(params, x, sv= sv)
+                plt.title(f'{res1} {atom_name1} {atom_name2} tauf: {tauf:0.2f}ps  Sf: {Sf:0.2f}   taus: {taus:0.2f}ns   S2: {Ss:0.2f}')
+                plt.plot(x,y,label='MD raw')
+                plt.plot(x, mod_internal, label='fit')
+                plt.ylim(0.5, 1.1)
+                plt.legend()
+                plt.savefig(pdf_name)
+                plt.show()
+                plt.close()
+                # os.exit
+
+        try:
+            os.mkdir(f'{self.path_prefix}_emf_fit/')
+        except FileExistsError:
+            pass
+
+        fit_results_pickle_file = f'{self.path_prefix}_emf_fit/emf_params_from_correlations_interal.pic'
+        with open(fit_results_pickle_file, 'wb') as handle:
+            pic.dump(emf_models, handle)
+
+    def fit_emf_correlation_three_tau_internal_only(self, 
+        atom_names, 
+        time_max=0.5e-9, 
+        ignore_list=(), 
+        fit_config='emf_to_md_correlation_function.toml'):
+
+        atom_info = self.make_atom_pairs_list(atom_names)
+        emf_models = {}
+
+        def model(params, time):
+            internal = correlation_functions.correlation_emf_three_tau_internal_only(params, time)
+            return internal
+
+        def resid(params, time, target):
+            internal_model = model(params, time)
+            return (internal_model - target)/(time*1e6 + 0.01) 
+
+        fitting_starting_conditions = toml.load(fit_config)
+
+        for res1, res2, atom_name1, atom_name2 in tqdm(atom_info):
+
+            if [atom_name1, atom_name2] not in ignore_list:
+                
+                name = f"{self.path_prefix}_rotacf/rotacf_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
+                pdf_name =f'{self.path_prefix}_rotacf/correlation_func_{res1}_{atom_name1}_{res2}_{atom_name2}_three_tau_internal.pdf'
+                temp = self.read_gmx_xvg(name) 
+
+                x = temp.T[0]
+                y = temp.T[1]
+
+                y = y[x<time_max]
+                x = x[x<time_max]
+
+                key = (res1, atom_name1, res2, atom_name2)
+
+                amp_vf = np.linspace(0, 0.2, 10)
+                amp_f  = np.linspace(0, 0.2, 10)
+                amp_s  = np.linspace(0, 0.4, 10)
+                
+                tau_vf =  np.geomspace(0.05e-12, 10e-12, 20)
+                tau_f = np.geomspace(10e-12, 500e-12, 20)
+                tau_s = np.geomspace(0.2e-9, 10e-9, 20)
+
+
+                print('doing the grid search')
+                lowest_rmsd = 1e10000
+
+                for i in tqdm(itertools.product(amp_vf, amp_f, amp_s, tau_vf, tau_f, tau_s)):
+                    
+                    amp_vf_i, amp_f_i, amp_s_i, tau_vf_i, tau_f_i, tau_s_i = i
+                    
+                    sum_check = amp_vf_i + amp_f_i + amp_s_i
+                    
+                    run_point = True
+
+                    if tau_vf_i > tau_f_i:
+                        run_point = False
+                    elif tau_f_i > tau_s_i:
+                        run_point = False
+                    elif sum_check > 1.:
+                        run_point = False
+
+                    if run_point:
+                        #print('here', amp_vf_i, amp_f_i, amp_s_i, tau_vf_i, tau_f_i, tau_s_i)
+
+                        values = {
+                        'tau_vf':tau_vf_i, 
+                        'tau_f':tau_f_i, 
+                        'tau_s':tau_s_i,
+                        'amp_vf': amp_vf_i, 
+                        'amp_f': amp_f_i,
+                        'amp_s': amp_s_i,
+                        'S_long': 1-amp_vf_i-amp_f_i-amp_s_i}
+
+                        rmsd_current = resid(values, x, y)
+                        rmsd_current = np.sum(rmsd_current**2)
+
+                        if rmsd_current < lowest_rmsd:
+                            best_model = i
+                            lowest_rmsd = rmsd_current
+
+                amp_vf_best, amp_f_best, amp_s_best, tau_vf_best, tau_f_best, tau_s_best = best_model
+
+                params = Parameters()
+                params.add('tau_vf', value=tau_vf_best, min=0, max=1e-9)
+                params.add('tau_f', value=tau_f_best, min=0, max=1e-9)
+                params.add('tau_s', value=tau_s_best, min=0, max=5e-9)
+                
+                params.add('amp_vf', value=amp_vf_best, min=0, max=0.6)
+                params.add('amp_f', value=amp_f_best, min=0, max=0.6)
+                params.add('amp_s', value=amp_s_best, min=0, max=0.6)
+                params.add('S_long', expr='1-amp_vf-amp_f-amp_s', min=0, max=1)
+
+                minner = Minimizer(resid, params, fcn_args=(x, y))
+                result = minner.minimize(method="powel")
+                emf_models[key] = result
+                report_fit(result)
+
+                tauvf = result.params['tau_vf'].value * 1e12
+                tauf = result.params['tau_f'].value * 1e12
+                taus = result.params['tau_s'].value * 1e9
+
+                ampvf = result.params['amp_vf'].value
+                ampf = result.params['amp_f'].value
+                amps = result.params['amp_s'].value
+
+                mod_internal = model(params, x)
+                plt.title(f'{res1} {atom_name1} {atom_name2} tauvf: {tauvf:0.2f}ps  Avf: {ampvf:0.2f} tauf: {tauf:0.2f}ps  Af: {ampf:0.2f}   taus: {taus:0.2f}ns   As: {amps:0.2f}')
+                plt.plot(x,y,label='MD raw')
+                plt.plot(x, mod_internal, label='fit')
+                plt.ylim(0.5, 1.1)
+                plt.legend()
+                plt.savefig(pdf_name)
+                #plt.show()
+                plt.close()
+                # os.exit
+
+        try:
+            os.mkdir(f'{self.path_prefix}_emf_fit/')
+        except FileExistsError:
+            pass
+
+        fit_results_pickle_file = f'{self.path_prefix}_emf_fit/emf_params_from_correlations_interal_three_tau.pic'
         with open(fit_results_pickle_file, 'wb') as handle:
             pic.dump(emf_models, handle)
 
