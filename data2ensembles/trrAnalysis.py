@@ -2260,9 +2260,9 @@ class AnalyseTrr():
                 amp_f  = np.linspace(0, 0.2, 10)
                 amp_s  = np.linspace(0, 0.4, 10)
                 
-                tau_vf =  np.geomspace(0.05e-12, 10e-12, 20)
-                tau_f = np.geomspace(10e-12, 500e-12, 20)
-                tau_s = np.geomspace(0.2e-9, 10e-9, 20)
+                tau_vf =  np.geomspace(0.05e-12, 10e-12, 10)
+                tau_f = np.geomspace(10e-12, 500e-12, 10)
+                tau_s = np.geomspace(0.2e-9, 10e-9, 10)
 
 
                 print('doing the grid search')
