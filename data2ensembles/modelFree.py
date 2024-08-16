@@ -497,7 +497,9 @@ class ModelFree():
             models_state = [[True,  False, False, False],
                             [True,  True,  False, False],
                             [True,  True,  True,  False],
-                            [True,  True,  True,  True],]
+                            [True,  True,  True,  True],
+                            [False,  False, True, True]]
+
         if simple == True:
             models_state = [[False, False, False, False,]]
 
@@ -516,14 +518,6 @@ class ModelFree():
             for mod in models_state:
                 params = Parameters()
 
-                #always have a S2
-                tag = 'S2'
-                if mod[0] == True:
-                    start, upper, lower = self.unpack_emf_config(tag, config)
-                    params.add(tag, value=start, min=lower, max=upper, vary=True)
-                else:
-                    params.add(tag, value=1, vary=False ,min= 0,max=1)
-
                 # now we add Sf 
                 tag = 'Sf'
                 if mod[2] == True:
@@ -531,6 +525,17 @@ class ModelFree():
                     params.add(tag, value=start, min=lower, max=upper, vary=True)
                 else:
                     params.add(tag, value=1, vary=False)
+
+                #always have a S2
+                tag = 'S2'
+                if mod[0] == True:
+                    start, upper, lower = self.unpack_emf_config(tag, config)
+                    params.add(tag, value=start, min=lower, max=upper, vary=True)
+                else:
+                    if mod[2] != True:
+                        params.add(tag, value=1, vary=False ,min= 0,max=1)
+                    else:
+                        params.add(tag, expr='Sf')
 
                 # add Ss, which depends on S2 and Sf
                 params.add('Ss', expr='S2/Sf', min=0, max=1)
