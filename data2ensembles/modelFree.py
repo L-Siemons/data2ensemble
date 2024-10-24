@@ -1376,7 +1376,7 @@ class ModelFree():
                 cosine_angles = self.cosine_angles[key]
                 diffs.append(diso[i] - q_model(cosine_angles, q))
 
-            return diffs
+            return np.array(diffs)
 
         #step one is to get all local tau_c 
         # this will give us an isotropic model
@@ -1426,12 +1426,51 @@ class ModelFree():
         result = minner.minimize(method='powel')
         report_fit(result)
 
+        inputs = []
+        for i in diso_local:
+            res_info = utils.get_atom_info_from_tag(i)
+            resid_, resname, atom1, atom2 = res_info
+            key = (resid_, atom1 , resid_, atom2)
+
+            cosine_angles = self.cosine_angles[key]
+            inputs.append(diso_local[i])
+
+        inputs = np.array(inputs)
+
+        plt.title('local tauc and model')
+        plt.plot(inputs, label='data')
+        plt.plot(inputs+result.residual, label='model')
+        plt.legend()
+        plt.savefig('diffusion_model_vs_data.pdf')
+        plt.show()
+
         res_dict = result.params.valuesdict()
         diso = np.mean([res_dict['dx'], res_dict['dy'], res_dict['dz']])
         print(f'Diso = {diso}')
         print(f'tauc iso = {1/(6*diso)}')
 
-    def global_connected_emf_fit(self, atom_name,
+        # now calculate chi square surface
+        scale_axis = np.linspace(-1.2, 1.2, 300) + res_dict['diff_scale']
+        chi_squares = []
+        
+        for i in scale_axis:
+            params = {'dx' : self.diffusion[0] * i, 
+                      'dy' : self.diffusion[1] * i, 
+                      'dz' : self.diffusion[2] * i}
+
+            residuals = resid(params, diso_local)
+            chi_squares.append(np.sum(residuals**2))
+
+        a = res_dict['diff_scale']
+        plt.title(f'best diffusion scalar {a}')
+        plt.plot(scale_axis, chi_squares)
+        plt.xlabel('diffusion scalar')
+        plt.ylabel('chi square value')
+        plt.savefig('diffusion_chi_square.pdf')
+        plt.show()
+
+
+    def global_connected_emf_fit(self, atom_name, 
         cpu_count=-1, 
         residual_type='hflf',
         provided_diffusion=None, 
