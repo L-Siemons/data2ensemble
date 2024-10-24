@@ -97,17 +97,26 @@ def relaxation_matrix(params,
 		model='anisotropic')
 
 	csa_atom_name = (y_spin, restype)
-	auto_H1pz = rates.r1_YX(params[key], 
-		spectral_density, 
-		fields,
-		PhysQ.bondlengths[x_spin, y_spin], 
-		csa_atom_name, 
-		y, 
-		y=x, 
-		cosine_angles = cos_ang[cos_key], 
-		csa_cosine_angles=cos_ang[cos_key],
-		PhysQ=PhysQ, 
-		model='axially symmetric')
+	auto_H1pz = rates.r1_YX_dipollar(params[key], 
+					spectral_density, 
+					fields,
+					PhysQ.bondlengths[x_spin, y_spin], 
+					'h', 
+					y='c',
+					cosine_angles = cos_ang[cos_key])
+
+
+	#rates.r1_YX(params[key], 
+	# 	spectral_density, 
+	# 	fields,
+	# 	PhysQ.bondlengths[x_spin, y_spin], 
+	# 	csa_atom_name, 
+	# 	y, 
+	# 	y=x, 
+	# 	cosine_angles = cos_ang[cos_key], 
+	# 	csa_cosine_angles=cos_ang[cos_key],
+	# 	PhysQ=PhysQ, 
+	# 	model='axially symmetric')
 	#print('auto H1', auto_H1pz)
 
 
