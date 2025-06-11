@@ -27,7 +27,7 @@ class PhysicalQuantities(object):
         
         #read the CSA 
         self.csa_axially_symetric = {}
-        file = pkg_resources.resource_filename('data2ensembles', 'dat/csa_dft_v2.dat')
+        file = pkg_resources.resource_filename('data2ensembles', 'dat/csa_v3.dat')
         file = open(file, 'r')
         for i in file.readlines():
             if i[0] != '#':
