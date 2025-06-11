@@ -11,3 +11,10 @@ C6 T -144.0e-6
 C2 A -156.0e-6
 C8 G -118.5e-6
 C8 A -127.5e-6
+#these CSAs come from DFT
+H1' A 8.05e-6
+H1' T 8.44e-6
+H1' C 9.42e-6
+H1' G 8.56e-6
+H1' C 9.42e-6
+H5  C 5.12e-6
