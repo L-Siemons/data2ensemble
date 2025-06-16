@@ -1442,7 +1442,7 @@ class ModelFree():
         plt.plot(inputs, label='data')
         plt.plot(inputs+result.residual, label='model')
         plt.xlabel('residue')
-        plt.ylabel('$D$')
+        plt.ylabel('$1/(6*\\tau_{c,loc})$')
         plt.legend()
         plt.savefig('diffusion_model_vs_data.pdf')
         plt.show()
