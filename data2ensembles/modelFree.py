@@ -1338,6 +1338,7 @@ class ModelFree():
         '''
         This function scales the hydroNMR diffusion tensor to NMR data using an approach similar
         https://sci-hub.hkvisa.net/10.1126/science.7754375
+        Long-Range Motional Restrictions in a Multi domain Zinc-Finger Protein from Anisotropic Tumbling
 
         and 
 
@@ -1440,6 +1441,8 @@ class ModelFree():
         plt.title('local tauc and model')
         plt.plot(inputs, label='data')
         plt.plot(inputs+result.residual, label='model')
+        plt.xlabel('residue')
+        plt.ylabel('$D$')
         plt.legend()
         plt.savefig('diffusion_model_vs_data.pdf')
         plt.show()
@@ -2684,7 +2687,7 @@ class ModelFree():
                 model_delays = sorted(delays)
                 
                 plt.plot(model_delays, model, color=color,zorder=1)
-                plt.errorbar(delays, exp_intensity_scalled, yerr=exp_error_scalled,fmt='|', 
+                plt.errorbar(delays, exp_intensity_scalled, yerr=np.absolute(exp_error_scalled),fmt='|', 
                     c=color,zorder=2)
                 plt.scatter(delays, exp_intensity_scalled, color=color, label=f"{f:0.1f} T",edgecolor='black',zorder=3)
             
@@ -2723,7 +2726,15 @@ class ModelFree():
             pass 
 
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
-        low_fields = sorted(self.ShuttleTrajectory.experiment_info.keys())
+        
+        if hasattr(self, 'ShuttleTrajectory'):
+            low_fields = sorted(self.ShuttleTrajectory.experiment_info.keys())
+        else:
+            print('No low fields')
+            low_fields = []
+
+
+
         print('plotting relaxometry_intensities')
 
         norm = matplotlib.colors.Normalize(0, 10, clip=True)
@@ -2803,7 +2814,8 @@ class ModelFree():
                 model_delays = sorted(delays)
                 
                 ax3.plot(model_delays, model, color=color,zorder=1)
-                ax3.errorbar(delays, exp_intensity_scalled, yerr=exp_error_scalled,fmt='|', c=color,zorder=2)
+                print('key ', i, 'errors: ', exp_error_scalled)
+                ax3.errorbar(delays, exp_intensity_scalled, yerr=np.absolute(exp_error_scalled),fmt='|', c=color,zorder=2)
                 ax3.scatter(delays, exp_intensity_scalled, color=color, label=f"{f:0.1f} T",edgecolor='black',zorder=3, s=marker_size)
 
                 data[i]['relaxometry_intensity'][f] = {}
