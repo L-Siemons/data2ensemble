@@ -297,6 +297,18 @@ def relaxation_matrix_emf_c1p(params,
 	cdef int jndx_tsp
 	cdef int jndx_mod
 
+	# get the protons in the residue 
+	distance_keys = rxy.keys()
+	residue_protons = []
+	for i in distance_keys:
+		if i[0] == resid:
+			residue_protons.append(i[1])
+			residue_protons.append(i[2])
+
+	# intersection of both lists
+	residue_protons = list(set(residue_protons))
+	protons = [x for x in protons if x in residue_protons]
+
 	# make an emty matrix
 	relaxation_matrix = np.zeros([operator_size,operator_size,  len(fields)])
 	proton_dipolar = {}
