@@ -280,8 +280,11 @@ def r2_YX(params, spectral_density, fields,
         term2a = spectral_density(params, [omega_zero]+csa_cosine_angles)
         term2b = spectral_density(params, [omega_x]+csa_cosine_angles)
         term2 = csa_prefactor*(4*term2a + 3*term2b)
+    
+    # the rex contribution 
+    rex = params['rex_pb']*(fields * PhysQ.gamma[x])**2
 
-    return term1 + term2
+    return term1 + term2 + rex
 
 def noe_YX(params, spectral_density, fields,
     rxy, x, r1, y='h', cosine_angles=[], PhysQ=PhysicalQuantities):
