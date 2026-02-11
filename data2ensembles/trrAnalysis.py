@@ -61,7 +61,7 @@ class PrepareReference():
         indices = np.argsort(eigen_values)
         #eigen_values = eigen_values[indices]
         U = eigen_vecs[:, indices]
-        print(U)
+        #print(U)
 
         rot_vec = utils.get_alignment_rotation(U, 'rotvec')
         degrees_to_rotate = np.linalg.norm(rot_vec)
@@ -281,6 +281,7 @@ class AnalyseTrr():
         for res1, res2, atom_name1, atom_name2 in atom_info:
 
             key = (res1, atom_name1, atom_name2)
+            #print(key)
             sel1 = f'resid {res1} and name {atom_name1}'
             sel2 = f'resid {res2} and name {atom_name2}'
             sele = [self.uni.select_atoms(sel1)[0], self.uni.select_atoms(sel2)[0]]
@@ -307,6 +308,7 @@ class AnalyseTrr():
 
     def calc_cosine_angles(self,
                         atom_names, 
+                        axis, 
                         calc_csa_angles=True, 
                         csa_ignore_list=[], 
                         skip=1000, 
@@ -328,11 +330,14 @@ class AnalyseTrr():
         #     a = a[1:4]
         #     return a
 
-
+        axis_names = ['dx', 'dy', 'dz' ]
+        for i,j in zip(axis_names, axis):
+            print(i, " : ", j)
 
         rmsf_file = self.path_prefix+'_rmsf.xvg'
 
         average_pdb = self.path_prefix+'_average.pdb'
+        print('average_pdb', average_pdb)
         # calculate average structure
         if calc_average_structure == True:
             gmx_command = f'{self.gmx} rmsf -f {self.xtc} -s {self.gro} -dt {dt} -ox {average_pdb} -o {rmsf_file} << EOF\n 0 \nEOF'
@@ -351,7 +356,9 @@ class AnalyseTrr():
 
         # here the larges axis is axis[2] this should be considered to be 'Dz' from the diffusion tensor
         # or in the case of a sphereoid D||
-        axis = self.average_uni.select_atoms('all').principal_axes()
+        
+        # try using the model given by hydro NMR
+        # axis = self.average_uni.select_atoms('all').principal_axes()
 
         #this file can be written out as a check if desired
         labels = ['large', 'middle', 'small']
@@ -381,6 +388,7 @@ class AnalyseTrr():
 
         for res1, res2, atom_name1, atom_name2 in atom_info:
 
+            #print(res1, res2, atom_name1, atom_name2)
             atom1_sele = self.average_uni.select_atoms(f'resid {res1} and name {atom_name1}')[0]
             atom2_sele = self.average_uni.select_atoms(f'resid {res2} and name {atom_name2}')[0]
             atom1_resname = atom1_sele.resname[1]
@@ -1332,10 +1340,10 @@ class AnalyseTrr():
             plt.savefig(name)
             plt.close()
 
-        self.write_diffusion_trace(res_params, "diffusion_tensor.dat")
+        self.write_diffusion_trace(res_params, diffusion_tensor_file)
     
     
-    def calculate_r1_r2_hetnoe(self, atom_names, diffusion_file, fields,x, y='h', blocks=False,dna=False, write_out=False, prefix='', ignore_atoms=[]):
+    def calculate_r1_r2_hetnoe(self, atom_names, diffusion_file, fields,x, y='h', blocks=False,dna=False, write_out=False, prefix='', ignore_atoms=[], model='axially symmetric'):
         '''
         This function calculate r1 r2 and hetnoe at high field for a X-Y spin system
         '''
@@ -1351,7 +1359,7 @@ class AnalyseTrr():
         params = {}
         diffusion_values, diffusion_errors = utils.read_diffusion_tensor(diffusion_file)
         print(f'Diffusion Tensor values: \ndx {diffusion_values[0]}\ndy {diffusion_values[1]}\ndz {diffusion_values[2]}')
-        axis = self.uni.select_atoms('all').principal_axes()
+        # axis = self.uni.select_atoms('all').principal_axes()
 
         if blocks == False:
             spec_file = self.path_prefix + '_fit_params/internal_correlations_0.dat'
@@ -1413,13 +1421,20 @@ class AnalyseTrr():
             rxy = PhysQ.bondlengths[atom_name1, atom_name2]
             spectral_density_key = (res1, atom_name1+','+atom_name2)
             params = spectral_density_params[spectral_density_key]
-
-            # make the csa params object
             csa_xx_params = csa_xx_spectral_density_params[spectral_density_key]
             csa_yy_params = csa_yy_spectral_density_params[spectral_density_key]
-            csa_xy_params = csa_xy_spectral_density_params[spectral_density_key]
-            csa_params = (csa_xx_params, csa_yy_params, csa_xy_params)
-
+            csa_xy_params = csa_xy_spectral_density_params[spectral_density_key]            
+            
+            if model == 'anisotropic':
+                # make the csa params object
+                csa_params = (csa_xx_params, csa_yy_params, csa_xy_params)
+                csa_angs = self.csa_cosine_angles[(res1, atom_name1, res2, atom_name2)]
+            elif model == 'axially symmetric':
+                csa_params = None 
+                csa_angs = angs
+            else:
+                raise NotImplementedError()
+            
             #now we need to add the diffusion parameters
             for i in (params, csa_xx_params, csa_yy_params,csa_xy_params):
                 i = self.add_diffution_spectral_density_params(i, diffusion_values)
@@ -1429,15 +1444,17 @@ class AnalyseTrr():
                 resname = self.resid2type[res1][1]
             else:
                 csa_atom_name = (atom_name1, self.resid2type[res1])
-                resname = self.resid2type[res1]
+                resname = self.resid2type[res1]            
 
-            # print(res1)
+
+
+
             spectral_density = self.spectral_density_anisotropic
             r1 = d2e.rates.r1_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
-                                cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params)
+                                cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params, model=model)
 
             r2 = d2e.rates.r2_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
-                                cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params)
+                                cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params, rex=False, model=model)
             
             hetnoe = d2e.rates.noe_YX(params, spectral_density, fields,
                                rxy, x, r1, y='h', cosine_angles=angs)
@@ -1465,7 +1482,8 @@ class AnalyseTrr():
             sigma_noe_out.close()
 
     def calculate_relaxometry_intensities(self, atom_names, diffusion_file, 
-        x, y='h', blocks=False,dna=False, write_out=False, prefix='', ignore_atoms=[]):
+        x, y='h', blocks=False,dna=False, write_out=False, prefix='', ignore_atoms=[], 
+        active_protons = ["H1'", "H2'1","H2'2", "H3'"], csa_model='axially symmetric'):
         '''
         This function calculate r1 r2 and hetnoe at high field for a X-Y spin system
         '''
@@ -1481,7 +1499,7 @@ class AnalyseTrr():
         params = {}
         diffusion_values, diffusion_errors = utils.read_diffusion_tensor(diffusion_file)
         print(f'Diffusion Tensor values: \ndx {diffusion_values[0]}\ndy {diffusion_values[1]}\ndz {diffusion_values[2]}')
-        axis = self.uni.select_atoms('all').principal_axes()
+        #axis = self.uni.select_atoms('all').principal_axes()
 
         if blocks == False:
             spec_file = self.path_prefix + '_fit_params/internal_correlations_0.dat'
@@ -1523,7 +1541,7 @@ class AnalyseTrr():
             print('Please provide the file with information on the shuttled experiments')
             print('This is done by setting: AnalyseTrr.relaxometry_experiment_details_file')
 
-        for res1, res2, atom_name1, atom_name2 in tqdm(reduced_atom_info):
+        for res1, res2, atom_name1, atom_name2 in reduced_atom_info:
 
             # define the parameters
             spectral_density_key = (res1, atom_name1+','+atom_name2)
@@ -1542,21 +1560,17 @@ class AnalyseTrr():
                 atom_check = True
                 x_spin = "C1'"
                 y_spin = "H1'"                
-                active_protons = ["H1'", "H2'1","H2'2", "H3'"] 
                 #active_protons = ["H1'", "H2'1", "H2'2","H3'", "H4'"]
                 passive_protons = active_protons
                 operator_size = 1+1 + len(active_protons)*2
 
-            if atom_name1 == "C5":
-                atom_check = True
-                x_spin = "C5"
-                y_spin = "H5"
-                active_protons = ["H5", "H6"] 
-                passive_protons = active_protons
-                operator_size = 1+1 + len(active_protons)*2
-
-            
-            print(atom_name1)
+            # if atom_name1 == "C5":
+            #     atom_check = True
+            #     x_spin = "C5"
+            #     y_spin = "H5"
+            #     active_protons = ["H5", "H6"] 
+            #     passive_protons = active_protons
+            #     operator_size = 1+1 + len(active_protons)*2
 
             if atom_check == True:
                 self.relaxometry_inensities[(res1, x_spin, y_spin)] = {}
@@ -1580,6 +1594,7 @@ class AnalyseTrr():
                     y_spin,
                     active_protons,
                     passive_protons,
+                    csa_model=csa_model
                     )
 
                     relaxation_matricies_backwards = relax_mat.relaxation_matrix(spectral_density_params, 
@@ -1595,7 +1610,8 @@ class AnalyseTrr():
                     x_spin,
                     y_spin,
                     active_protons,
-                    passive_protons,)
+                    passive_protons,
+                    csa_model=csa_model)
 
                     relaxation_matricies_stablaization_delay = relax_mat.relaxation_matrix(spectral_density_params, 
                     res1, 
@@ -1610,7 +1626,8 @@ class AnalyseTrr():
                     x_spin,
                     y_spin,
                     active_protons,
-                    passive_protons )
+                    passive_protons,
+                    csa_model=csa_model)
 
                     forwrds_propergators = mathFunc.construct_operator(relaxation_matricies_forwards, forwards_time)
                     
@@ -1636,7 +1653,8 @@ class AnalyseTrr():
                     x_spin,
                     y_spin,
                     active_protons,
-                    passive_protons)
+                    passive_protons, 
+                    csa_model=csa_model)
 
                     # print("Field", i)
                     # print('Relaxation matrix:: ')
@@ -1720,6 +1738,7 @@ class AnalyseTrr():
             plt.legend()
             plt.savefig(f'{self.path_prefix}_{res1}_{atom_name1}_intensities.pdf')
             plt.clf()
+            plt.close()
 
     def plot_relaxometry_coherences(self):
 
@@ -1777,9 +1796,16 @@ class AnalyseTrr():
 
     def fit_diffusion_to_r1_r2_hetnoe(self, r1_file, r1_error, r2_file, r2_error, hetNoe_file, hetNoe_errors, spectral_density_file,
                                       fields,x, y='h', blocks=False,dna=False, write_out=False, reduced_noe=False,
-                                      error_filter=0.05, PhysQ=PhysQ, model="anisotropic", scale_model='default', out_name= "diffusion_tensor_fitted.dat"):
+                                      error_filter=0.05, 
+                                      PhysQ=PhysQ, 
+                                      model="anisotropic", 
+                                      scale_model='default', 
+                                      out_name= "diffusion_tensor_fitted.dat", 
+                                      max_d_component = 83333333, 
+                                      use_noe=True,
+                                      csa_model='axially symetric'):
     
-        def resid(params, values, errors, csa, bondlength, cosine_angles, spec_params, fields, csa_cosine_angles, csa_params):
+        def resid(params, values, errors, csa, bondlength, cosine_angles, spec_params, fields, csa_cosine_angles, csa_params, use_noe):
 
             spec_den = self.spectral_density_anisotropic
             total = []
@@ -1800,22 +1826,34 @@ class AnalyseTrr():
                     param_dict['dy'] = params['dy']
                     param_dict['dz'] = params['dz']
 
-                csa_parami = (csa_parami_xx, csa_parami_yy, csa_parami_xy)
+                
+                if csa_model == 'anisotropic':
+                    csa_parami = (csa_parami_xx, csa_parami_yy, csa_parami_xy)
+                elif csa_model == 'axially symmetric':
+                    csa_cosine_angles = angi
+                    csa_parami = None
+                    #print('angi', angi, type(angi))
+                else:
+                    raise NotImplementedError()
 
                 model_r1 = d2e.rates.r1_YX(speci, spec_den, fields, bondlengthi, csai, x, 
-                    cosine_angles=angi, csa_cosine_angles=csa_cosine_angles, csa_params=csa_parami)
+                    cosine_angles=angi, csa_cosine_angles=csa_cosine_angles, csa_params=csa_parami,model=csa_model)
                 model_r2 = d2e.rates.r2_YX(speci, spec_den, fields, bondlengthi, csai, x, 
-                    cosine_angles=angi, csa_cosine_angles=csa_cosine_angles,  csa_params=csa_parami)
+                    cosine_angles=angi, csa_cosine_angles=csa_cosine_angles,  csa_params=csa_parami, rex=False,model=csa_model)
 
                 # use the reduced NOE in the fitting? This is to prevent the R1 being pressent twice in the fit 
                 # and alows the error in the R1 to be included in the error estimation for the hetNOE 
 
-                if reduced_noe == False:
-                    model_noe = d2e.rates.noe_YX(speci, spec_den, fields, bondlengthi, x, model_r1, cosine_angles=angi)
-                elif reduced_noe == True:
-                    model_noe = d2e.rates.r1_reduced_noe_YX(speci, spec_den, fields, bondlengthi, x, cosine_angles=angi)
+                if use_noe:
+                    if reduced_noe == False:
+                        model_noe = d2e.rates.noe_YX(speci, spec_den, fields, bondlengthi, x, model_r1, cosine_angles=angi)
+                    elif reduced_noe == True:
+                        model_noe = d2e.rates.r1_reduced_noe_YX(speci, spec_den, fields, bondlengthi, x, cosine_angles=angi)
+                    model = np.array([model_r1,model_r2, model_noe])
+                
+                else:
+                    model = np.array([model_r1,model_r2,])
 
-                model = np.array([model_r1,model_r2, model_noe])
                 #print(model.shape, vali.shape,  erri)
                 diffs = (model - vali)/erri
                 total.append(diffs)
@@ -1837,7 +1875,7 @@ class AnalyseTrr():
         csa_spectral_density_params = self.read_csa_spectra_density_params()
         csa_xx_spectral_density_params, csa_yy_spectral_density_params, csa_xy_spectral_density_params = csa_spectral_density_params
 
-        axis = self.uni.select_atoms('all').principal_axes()
+        # axis = self.uni.select_atoms('all').principal_axes()
 
         # Quite a few logic checks!
         # should probably turn this into a function, also used in other routines 
@@ -1897,9 +1935,14 @@ class AnalyseTrr():
                     csa_params.append(csa_params_temp)
 
                     #get the local correlation times but fitting r1, r2, and hetnoe 
-                    current_values = np.array([r1[i], r2[i],hetnoe[i]])
+                    if use_noe:
+                        current_values = np.array([r1[i], r2[i],hetnoe[i]])
+                        current_errors = np.array([r1_err[i], r2_err[i],hetnoe_err[i]])
+                    else:
+                        current_values = np.array([r1[i], r2[i]])
+                        current_errors = np.array([r1_err[i], r2_err[i]])
+                    
                     values.append(current_values)
-                    current_errors = np.array([r1_err[i], r2_err[i],hetnoe_err[i]])
                     errors.append(current_errors)
 
                     csa_key = (atom2_type, atom2_res_type)
@@ -1920,18 +1963,18 @@ class AnalyseTrr():
             except KeyError:
                 pass
 
-
+        model_kwargs = {'max':max_d_component, 'value': 1/(6*3e-9), 'min':0}
         if model == "anisotropic":
             params = Parameters()
-            params.add('dx', min=0, value=1/(6*4e-9))
-            params.add('dy', min=0, value=1/(6*4e-9))
-            params.add('dz', min=0, value=1/(6*4e-9))
+            params.add('dx', **model_kwargs)
+            params.add('dy', **model_kwargs)
+            params.add('dz', **model_kwargs)
 
         elif model == 'sphereoid':
             params = Parameters()
-            params.add('dx', min=0, value=1/(6*4e-9))
-            params.add('dy', min=0, value=1/(6*4e-9), expr='dx')
-            params.add('dz', min=0, value=1/(6*4e-9))
+            params.add('dx', max=max_d_component, min=0, value=1/(6*2e-9))
+            params.add('dy', max=max_d_component, min=0, expr='dx')
+            params.add('dz', max=max_d_component, min=0, value=1/(6*4e-9))
 
         elif model == 'scale':
 
@@ -1946,15 +1989,15 @@ class AnalyseTrr():
             params.add('dyinit', value=dval[1], vary=False)
             params.add('dzinit', value=dval[2], vary=False)
 
-            params.add('dx', min=0, expr='dxinit*scalar')
-            params.add('dy', min=0, expr='dyinit*scalar')
-            params.add('dz', min=0, expr='dzinit*scalar')
+            params.add('dx', max=max_d_component, min=0, expr='dxinit*scalar')
+            params.add('dy', max=max_d_component, min=0, expr='dyinit*scalar')
+            params.add('dz', max=max_d_component, min=0, expr='dzinit*scalar')
         else:
             print('Model selected does not exist')
             sys.exit()
 
         minner = Minimizer(resid, params, fcn_args=(values, errors, csa, bondlengths, cosine_angles, 
-                           spectral_density_params, fields, csa_cosine_angles,csa_params))
+                           spectral_density_params, fields, csa_cosine_angles,csa_params, use_noe))
 
         result = minner.minimize()
         res_params = result.params
