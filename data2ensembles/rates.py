@@ -160,7 +160,9 @@ def r1_YX_csa(params, spectral_density, fields,
     PhysQ, omega_x=None, model='anisotropic'):
 
     omega_x = PhysQ.calc_omega(x, fields)
-    if model == 'anisotropic':
+
+    #print('model', model)
+    if model == '21':
 
         csa_prefactor = PhysQ.calc_aniso_csa_prefactor(fields, x, csa_atom_name)
         csa_j_term = anisotropic_csa_in_anisotropic_diffusion(params, spectral_density, omega_x,
@@ -171,10 +173,16 @@ def r1_YX_csa(params, spectral_density, fields,
         term2 = csa_prefactor*csa_j_term
         return term2
 
-    if model == 'axially symmetric':
+    elif model == 'axially symmetric':
+        #print('I was here', [omega_x]+csa_cosine_angles)
         csa_prefactor = PhysQ.calc_axially_symetric_csa(fields, x, csa_atom_name)**2
         term2 = csa_prefactor*spectral_density(params, [omega_x]+csa_cosine_angles)
         return term2
+    
+    else:
+        print(f'model {model} doesnt exist')
+        raise NotImplementedError
+    
 
 
 def r1_YX(params, 
@@ -215,20 +223,21 @@ def r1_YX(params,
         cosine_angles = cosine_angles, 
         omega_x=omega_x, 
         omega_y=omega_y,
-        PhysQ=PhysicalQuantities)
+        PhysQ=PhysQ)
 
     term2 = r1_YX_csa(params, spectral_density, fields,
     csa_atom_name, x, y, csa_cosine_angles, csa_params,
     PhysQ, omega_x=omega_x, model=model)
 
     #print(term1, term2)
+    #print('model' , model)
     return term1 + term2
 
 
 def r2_YX(params, spectral_density, fields,
     rxy, csa_atom_name, x,
     y='h', cosine_angles=[], csa_cosine_angles=None,csa_params=None,
-    PhysQ=PhysicalQuantities, model='anisotropic'):
+    PhysQ=PhysicalQuantities, model='anisotropic', rex=True):
 
     '''
     This function calculates the R2 rate for atom X in a X-Y spin
@@ -281,10 +290,14 @@ def r2_YX(params, spectral_density, fields,
         term2b = spectral_density(params, [omega_x]+csa_cosine_angles)
         term2 = csa_prefactor*(4*term2a + 3*term2b)
     
-    # the rex contribution 
-    rex = params['rex_pb']*(fields * PhysQ.gamma[x])**2
+    if rex:
+        # the rex contribution 
+        rex_value = params['rex_pb']*(fields * PhysQ.gamma[x])**2
+    else:
+        rex_value = 0.
 
-    return term1 + term2 + rex
+
+    return term1 + term2 + rex_value
 
 def noe_YX(params, spectral_density, fields,
     rxy, x, r1, y='h', cosine_angles=[], PhysQ=PhysicalQuantities):
