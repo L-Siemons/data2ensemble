@@ -1,17 +1,17 @@
 # The CSA values are taken from
 # Bryce, D. L.; Grishaev, A.; Bax, A. J. Am. Chem. Soc. 2005, 127, 7387-7396.
 # Ying, J.; Grishaev, A.; Bryce, D. L.; Bax, A. J. Am. Chem. Soc. 2006, 128, 11443-11454.
+# here the proton CSAs have been set to 0. 
 C1' A 40e-6
 C1' C 40e-6
 C1' G 40e-6
 C1' T 40e-6
-C5 C -127.0e-6
-C6 C -172.5e-6
-C6 T -144.0e-6
-C2 A -156.0e-6
-C8 G -118.5e-6
-C8 A -127.5e-6
-#these CSAs come from DFT
+C5 C 144e-6
+C6 C 186e-6
+C6 T 168e-6
+C2 A 168e-6
+C8 G 133e-6
+C8 A 144e-6
 H1' A 0.0 #8.05e-6
 H1' T 0.0 #8.44e-6
 H1' C 0.0 #9.42e-6

@@ -25,6 +25,8 @@ import pickle as pic
 from lmfit import Minimizer, Parameters, report_fit
 from tqdm import tqdm
 import enlighten
+import toml
+import itertools
 
 import scipy
 import scipy.fft
@@ -59,7 +61,7 @@ class PrepareReference():
         indices = np.argsort(eigen_values)
         #eigen_values = eigen_values[indices]
         U = eigen_vecs[:, indices]
-        print(U)
+        #print(U)
 
         rot_vec = utils.get_alignment_rotation(U, 'rotvec')
         degrees_to_rotate = np.linalg.norm(rot_vec)
@@ -279,6 +281,7 @@ class AnalyseTrr():
         for res1, res2, atom_name1, atom_name2 in atom_info:
 
             key = (res1, atom_name1, atom_name2)
+            #print(key)
             sel1 = f'resid {res1} and name {atom_name1}'
             sel2 = f'resid {res2} and name {atom_name2}'
             sele = [self.uni.select_atoms(sel1)[0], self.uni.select_atoms(sel2)[0]]
@@ -305,6 +308,7 @@ class AnalyseTrr():
 
     def calc_cosine_angles(self,
                         atom_names, 
+                        axis, 
                         calc_csa_angles=True, 
                         csa_ignore_list=[], 
                         skip=1000, 
@@ -326,11 +330,14 @@ class AnalyseTrr():
         #     a = a[1:4]
         #     return a
 
-
+        axis_names = ['dx', 'dy', 'dz' ]
+        for i,j in zip(axis_names, axis):
+            print(i, " : ", j)
 
         rmsf_file = self.path_prefix+'_rmsf.xvg'
 
         average_pdb = self.path_prefix+'_average.pdb'
+        print('average_pdb', average_pdb)
         # calculate average structure
         if calc_average_structure == True:
             gmx_command = f'{self.gmx} rmsf -f {self.xtc} -s {self.gro} -dt {dt} -ox {average_pdb} -o {rmsf_file} << EOF\n 0 \nEOF'
@@ -349,7 +356,9 @@ class AnalyseTrr():
 
         # here the larges axis is axis[2] this should be considered to be 'Dz' from the diffusion tensor
         # or in the case of a sphereoid D||
-        axis = self.average_uni.select_atoms('all').principal_axes()
+        
+        # try using the model given by hydro NMR
+        # axis = self.average_uni.select_atoms('all').principal_axes()
 
         #this file can be written out as a check if desired
         labels = ['large', 'middle', 'small']
@@ -379,6 +388,7 @@ class AnalyseTrr():
 
         for res1, res2, atom_name1, atom_name2 in atom_info:
 
+            #print(res1, res2, atom_name1, atom_name2)
             atom1_sele = self.average_uni.select_atoms(f'resid {res1} and name {atom_name1}')[0]
             atom2_sele = self.average_uni.select_atoms(f'resid {res2} and name {atom_name2}')[0]
             atom1_resname = atom1_sele.resname[1]
@@ -1037,33 +1047,13 @@ class AnalyseTrr():
         report_fit(result)
         return result
 
-    def fit_all_correlation_functions(self,
-        atom_names, time_threshold=10e-9,
-        log_time_min=5e-13, log_time_max=10e-9,blocks=True, calc_csa_tcf=False, 
-        ignore_list=[], csa_ignore_list=[]):
-
-        def write_line_to_params_files(values, file, curve_count=self.curve_count):
-
-            amps = [str(values['amp_%i'%(i+1)]) for i in range(curve_count)]
-            amps = ','.join(amps)
-            times = [str(values['time_%i'%(i+1)]) for i in range(curve_count)]
-            times = ','.join(times)
-            slong = values['S_long']
-            line = f'{res1}:{atom_name1},{atom_name2}:{slong}:{amps}:{times}\n'
-            file.write(line)
-            file.flush()
-
-
-        atom_info = self.make_atom_pairs_list(atom_names)
-        atom1 = atom_names[0][0]
-        atom2 = atom_names[0][1]
-
-        acf_fitting_kws = {
-        'log_time_min' : log_time_min, 
-        'log_time_max' : log_time_max
-
-        }
-
+    def make_correlation_fit_directories(self,):
+        
+        '''
+        This function makes the directories used by functions that fit 
+        the correlation functions
+        '''
+        
         try:
             os.mkdir(f'{self.path_prefix}_fits')
         except FileExistsError:
@@ -1079,14 +1069,41 @@ class AnalyseTrr():
         except FileExistsError:
             pass
 
+    def write_line_to_params_files(self, values, file):
+        '''
+        This function is used by fit_all_correlation_functions_dipolar and 
+        fit_all_correlation_functions_csa
+        to write out the fitted parameters
+        '''
+
+        amps = [str(values['amp_%i'%(i+1)]) for i in range(self.curve_count)]
+        amps = ','.join(amps)
+        times = [str(values['time_%i'%(i+1)]) for i in range(self.curve_count)]
+        times = ','.join(times)
+        slong = values['S_long']
+        line = f'{res1}:{atom_name1},{atom_name2}:{slong}:{amps}:{times}\n'
+        file.write(line)
+        file.flush()
+
+
+    def fit_all_correlation_functions_dipolar(self,
+        atom_names, time_threshold=10e-9,
+        log_time_min=5e-13, log_time_max=10e-9,blocks=True, calc_csa_tcf=False, 
+        ignore_list=[], csa_ignore_list=[]):
+
+        acf_fitting_kws = {
+        'log_time_min' : log_time_min, 
+        'log_time_max' : log_time_max
+        }
+
+        atom_info = self.make_atom_pairs_list(atom_names)
+        atom1 = atom_names[0][0]
+        atom2 = atom_names[0][1]
+
         if blocks==True:
             block_count = self.get_number_of_blocks(atom_names)
         else:
             block_count = 1
-
-        #manager = enlighten.get_manager()
-        #blocks_pbar = manager.counter(total=block_count, desc="Blocks", unit="Ticks", color="red")
-        #residues_pbar = manager.counter(total=len(self.uni.residues)*block_count, desc="residues", unit="Tocks", color="blue")
 
         for block in range(block_count):
 
@@ -1097,8 +1114,6 @@ class AnalyseTrr():
                 params_out_csa_xy = open(f'{self.path_prefix}_fit_params/internal_csa_xy_correlations_{block}.dat', 'w')
 
             params_out.write('# residue:atoms:S2:amps:times\n')
-            
-            
             for res1, res2, atom_name1, atom_name2 in atom_info:
 
                 #file IO
@@ -1134,6 +1149,41 @@ class AnalyseTrr():
                     #residues_pbar.update()
                     write_line_to_params_files(values, params_out)
 
+        params_out.close()
+
+    def fit_all_correlation_functions_csa(self,
+        atom_names, time_threshold=10e-9,
+        log_time_min=5e-13, log_time_max=10e-9,blocks=True, calc_csa_tcf=False, 
+        ignore_list=[], csa_ignore_list=[]):
+
+        acf_fitting_kws = {
+        'log_time_min' : log_time_min, 
+        'log_time_max' : log_time_max
+        }
+
+        atom_info = self.make_atom_pairs_list(atom_names)
+        atom1 = atom_names[0][0]
+        atom2 = atom_names[0][1]
+
+        if blocks==True:
+            block_count = self.get_number_of_blocks(atom_names)
+        else:
+            block_count = 1
+
+        for block in range(block_count):
+
+            params_out = open(f'{self.path_prefix}_fit_params/internal_correlations_{block}.dat', 'w')
+            if calc_csa_tcf == True:
+                params_out_csa_xx = open(f'{self.path_prefix}_fit_params/internal_csa_xx_correlations_{block}.dat', 'w')
+                params_out_csa_yy = open(f'{self.path_prefix}_fit_params/internal_csa_yy_correlations_{block}.dat', 'w')
+                params_out_csa_xy = open(f'{self.path_prefix}_fit_params/internal_csa_xy_correlations_{block}.dat', 'w')
+
+            params_out.write('# residue:atoms:S2:amps:times\n')
+            for res1, res2, atom_name1, atom_name2 in atom_info:
+
+                #file IO
+                if [atom_name1, atom_name2] not in ignore_list:
+
                     if calc_csa_tcf == True:
                         if (atom_name1, atom_name2) not in csa_ignore_list:
                             csa_name = f'{self.path_prefix}_rotacf/csa_ct_{res1}_{atom_name1}.xvg'
@@ -1166,12 +1216,32 @@ class AnalyseTrr():
                                 self.plot_csa_tcfs(values, time, cts, block, res1, atom_name1)
 
             #close the parameter files!
-            params_out.close()
             if calc_csa_tcf == True:
                 params_out_csa_xx.close()
                 params_out_csa_yy.close()
                 params_out_csa_xy.close()
-    
+
+
+    def fit_all_correlation_functions(self,
+        atom_names, time_threshold=10e-9,
+        log_time_min=5e-13, log_time_max=10e-9,blocks=True, calc_csa_tcf=False, 
+        ignore_list=[], csa_ignore_list=[]):
+
+        kws = {'time_threshold': time_threshold,
+        'log_time_min' : log_time_min, 
+        'log_time_max': log_time_max,
+        'blocks':blocks, 
+        'calc_csa_tcf':calc_csa_tcf, 
+        'ignore_list':ignore_list, 
+        'csa_ignore_list':csa_ignore_list}
+
+
+        # fit all the dipolar parts 
+        self.fit_all_correlation_functions_dipolar(atom_names, **kws)
+
+        # fit all the dipolar csa parts
+        fit_all_correlation_functions_csa(atom_names,**kws)
+
     def fit_diffusion_tensor(self, atom_names, blocks=True, threshold=50e-9, timestep=2e-12):
         '''
         Here we fit the diffusion tensor to the rotational correlation functions with 
@@ -1270,10 +1340,10 @@ class AnalyseTrr():
             plt.savefig(name)
             plt.close()
 
-        self.write_diffusion_trace(res_params, "diffusion_tensor.dat")
+        self.write_diffusion_trace(res_params, diffusion_tensor_file)
     
     
-    def calculate_r1_r2_hetnoe(self, atom_names, diffusion_file, fields,x, y='h', blocks=False,dna=False, write_out=False, prefix='', ignore_atoms=[]):
+    def calculate_r1_r2_hetnoe(self, atom_names, diffusion_file, fields,x, y='h', blocks=False,dna=False, write_out=False, prefix='', ignore_atoms=[], model='axially symmetric'):
         '''
         This function calculate r1 r2 and hetnoe at high field for a X-Y spin system
         '''
@@ -1289,7 +1359,7 @@ class AnalyseTrr():
         params = {}
         diffusion_values, diffusion_errors = utils.read_diffusion_tensor(diffusion_file)
         print(f'Diffusion Tensor values: \ndx {diffusion_values[0]}\ndy {diffusion_values[1]}\ndz {diffusion_values[2]}')
-        axis = self.uni.select_atoms('all').principal_axes()
+        # axis = self.uni.select_atoms('all').principal_axes()
 
         if blocks == False:
             spec_file = self.path_prefix + '_fit_params/internal_correlations_0.dat'
@@ -1351,13 +1421,20 @@ class AnalyseTrr():
             rxy = PhysQ.bondlengths[atom_name1, atom_name2]
             spectral_density_key = (res1, atom_name1+','+atom_name2)
             params = spectral_density_params[spectral_density_key]
-
-            # make the csa params object
             csa_xx_params = csa_xx_spectral_density_params[spectral_density_key]
             csa_yy_params = csa_yy_spectral_density_params[spectral_density_key]
-            csa_xy_params = csa_xy_spectral_density_params[spectral_density_key]
-            csa_params = (csa_xx_params, csa_yy_params, csa_xy_params)
-
+            csa_xy_params = csa_xy_spectral_density_params[spectral_density_key]            
+            
+            if model == 'anisotropic':
+                # make the csa params object
+                csa_params = (csa_xx_params, csa_yy_params, csa_xy_params)
+                csa_angs = self.csa_cosine_angles[(res1, atom_name1, res2, atom_name2)]
+            elif model == 'axially symmetric':
+                csa_params = None 
+                csa_angs = angs
+            else:
+                raise NotImplementedError()
+            
             #now we need to add the diffusion parameters
             for i in (params, csa_xx_params, csa_yy_params,csa_xy_params):
                 i = self.add_diffution_spectral_density_params(i, diffusion_values)
@@ -1367,15 +1444,17 @@ class AnalyseTrr():
                 resname = self.resid2type[res1][1]
             else:
                 csa_atom_name = (atom_name1, self.resid2type[res1])
-                resname = self.resid2type[res1]
+                resname = self.resid2type[res1]            
 
-            # print(res1)
+
+
+
             spectral_density = self.spectral_density_anisotropic
             r1 = d2e.rates.r1_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
-                                cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params)
+                                cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params, model=model)
 
             r2 = d2e.rates.r2_YX(params, spectral_density, fields,rxy, csa_atom_name, x, y='h', 
-                                cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params)
+                                cosine_angles = angs, csa_cosine_angles=csa_angs, csa_params=csa_params, rex=False, model=model)
             
             hetnoe = d2e.rates.noe_YX(params, spectral_density, fields,
                                rxy, x, r1, y='h', cosine_angles=angs)
@@ -1403,7 +1482,8 @@ class AnalyseTrr():
             sigma_noe_out.close()
 
     def calculate_relaxometry_intensities(self, atom_names, diffusion_file, 
-        x, y='h', blocks=False,dna=False, write_out=False, prefix='', ignore_atoms=[]):
+        x, y='h', blocks=False,dna=False, write_out=False, prefix='', ignore_atoms=[], 
+        active_protons = ["H1'", "H2'1","H2'2", "H3'"], csa_model='axially symmetric'):
         '''
         This function calculate r1 r2 and hetnoe at high field for a X-Y spin system
         '''
@@ -1419,7 +1499,7 @@ class AnalyseTrr():
         params = {}
         diffusion_values, diffusion_errors = utils.read_diffusion_tensor(diffusion_file)
         print(f'Diffusion Tensor values: \ndx {diffusion_values[0]}\ndy {diffusion_values[1]}\ndz {diffusion_values[2]}')
-        axis = self.uni.select_atoms('all').principal_axes()
+        #axis = self.uni.select_atoms('all').principal_axes()
 
         if blocks == False:
             spec_file = self.path_prefix + '_fit_params/internal_correlations_0.dat'
@@ -1461,7 +1541,7 @@ class AnalyseTrr():
             print('Please provide the file with information on the shuttled experiments')
             print('This is done by setting: AnalyseTrr.relaxometry_experiment_details_file')
 
-        for res1, res2, atom_name1, atom_name2 in tqdm(reduced_atom_info):
+        for res1, res2, atom_name1, atom_name2 in reduced_atom_info:
 
             # define the parameters
             spectral_density_key = (res1, atom_name1+','+atom_name2)
@@ -1480,20 +1560,17 @@ class AnalyseTrr():
                 atom_check = True
                 x_spin = "C1'"
                 y_spin = "H1'"                
-                active_protons = ["H1'", "H2'1","H2'2"] 
+                #active_protons = ["H1'", "H2'1", "H2'2","H3'", "H4'"]
                 passive_protons = active_protons
                 operator_size = 1+1 + len(active_protons)*2
 
-            if atom_name1 == "C5":
-                atom_check = True
-                x_spin = "C5"
-                y_spin = "H5"
-                active_protons = ["H5", "H6"] 
-                passive_protons = active_protons
-                operator_size = 1+1 + len(active_protons)*2
-
-            
-            print(atom_name1)
+            # if atom_name1 == "C5":
+            #     atom_check = True
+            #     x_spin = "C5"
+            #     y_spin = "H5"
+            #     active_protons = ["H5", "H6"] 
+            #     passive_protons = active_protons
+            #     operator_size = 1+1 + len(active_protons)*2
 
             if atom_check == True:
                 self.relaxometry_inensities[(res1, x_spin, y_spin)] = {}
@@ -1517,6 +1594,7 @@ class AnalyseTrr():
                     y_spin,
                     active_protons,
                     passive_protons,
+                    csa_model=csa_model
                     )
 
                     relaxation_matricies_backwards = relax_mat.relaxation_matrix(spectral_density_params, 
@@ -1532,7 +1610,8 @@ class AnalyseTrr():
                     x_spin,
                     y_spin,
                     active_protons,
-                    passive_protons,)
+                    passive_protons,
+                    csa_model=csa_model)
 
                     relaxation_matricies_stablaization_delay = relax_mat.relaxation_matrix(spectral_density_params, 
                     res1, 
@@ -1547,7 +1626,8 @@ class AnalyseTrr():
                     x_spin,
                     y_spin,
                     active_protons,
-                    passive_protons )
+                    passive_protons,
+                    csa_model=csa_model)
 
                     forwrds_propergators = mathFunc.construct_operator(relaxation_matricies_forwards, forwards_time)
                     
@@ -1573,7 +1653,8 @@ class AnalyseTrr():
                     x_spin,
                     y_spin,
                     active_protons,
-                    passive_protons)
+                    passive_protons, 
+                    csa_model=csa_model)
 
                     # print("Field", i)
                     # print('Relaxation matrix:: ')
@@ -1657,6 +1738,7 @@ class AnalyseTrr():
             plt.legend()
             plt.savefig(f'{self.path_prefix}_{res1}_{atom_name1}_intensities.pdf')
             plt.clf()
+            plt.close()
 
     def plot_relaxometry_coherences(self):
 
@@ -1714,9 +1796,16 @@ class AnalyseTrr():
 
     def fit_diffusion_to_r1_r2_hetnoe(self, r1_file, r1_error, r2_file, r2_error, hetNoe_file, hetNoe_errors, spectral_density_file,
                                       fields,x, y='h', blocks=False,dna=False, write_out=False, reduced_noe=False,
-                                      error_filter=0.05, PhysQ=PhysQ, model="anisotropic", scale_model='default', out_name= "diffusion_tensor_fitted.dat"):
+                                      error_filter=0.05, 
+                                      PhysQ=PhysQ, 
+                                      model="anisotropic", 
+                                      scale_model='default', 
+                                      out_name= "diffusion_tensor_fitted.dat", 
+                                      max_d_component = 83333333, 
+                                      use_noe=True,
+                                      csa_model='axially symetric'):
     
-        def resid(params, values, errors, csa, bondlength, cosine_angles, spec_params, fields, csa_cosine_angles, csa_params):
+        def resid(params, values, errors, csa, bondlength, cosine_angles, spec_params, fields, csa_cosine_angles, csa_params, use_noe):
 
             spec_den = self.spectral_density_anisotropic
             total = []
@@ -1737,22 +1826,34 @@ class AnalyseTrr():
                     param_dict['dy'] = params['dy']
                     param_dict['dz'] = params['dz']
 
-                csa_parami = (csa_parami_xx, csa_parami_yy, csa_parami_xy)
+                
+                if csa_model == 'anisotropic':
+                    csa_parami = (csa_parami_xx, csa_parami_yy, csa_parami_xy)
+                elif csa_model == 'axially symmetric':
+                    csa_cosine_angles = angi
+                    csa_parami = None
+                    #print('angi', angi, type(angi))
+                else:
+                    raise NotImplementedError()
 
                 model_r1 = d2e.rates.r1_YX(speci, spec_den, fields, bondlengthi, csai, x, 
-                    cosine_angles=angi, csa_cosine_angles=csa_cosine_angles, csa_params=csa_parami)
+                    cosine_angles=angi, csa_cosine_angles=csa_cosine_angles, csa_params=csa_parami,model=csa_model)
                 model_r2 = d2e.rates.r2_YX(speci, spec_den, fields, bondlengthi, csai, x, 
-                    cosine_angles=angi, csa_cosine_angles=csa_cosine_angles,  csa_params=csa_parami)
+                    cosine_angles=angi, csa_cosine_angles=csa_cosine_angles,  csa_params=csa_parami, rex=False,model=csa_model)
 
                 # use the reduced NOE in the fitting? This is to prevent the R1 being pressent twice in the fit 
                 # and alows the error in the R1 to be included in the error estimation for the hetNOE 
 
-                if reduced_noe == False:
-                    model_noe = d2e.rates.noe_YX(speci, spec_den, fields, bondlengthi, x, model_r1, cosine_angles=angi)
-                elif reduced_noe == True:
-                    model_noe = d2e.rates.r1_reduced_noe_YX(speci, spec_den, fields, bondlengthi, x, cosine_angles=angi)
+                if use_noe:
+                    if reduced_noe == False:
+                        model_noe = d2e.rates.noe_YX(speci, spec_den, fields, bondlengthi, x, model_r1, cosine_angles=angi)
+                    elif reduced_noe == True:
+                        model_noe = d2e.rates.r1_reduced_noe_YX(speci, spec_den, fields, bondlengthi, x, cosine_angles=angi)
+                    model = np.array([model_r1,model_r2, model_noe])
+                
+                else:
+                    model = np.array([model_r1,model_r2,])
 
-                model = np.array([model_r1,model_r2, model_noe])
                 #print(model.shape, vali.shape,  erri)
                 diffs = (model - vali)/erri
                 total.append(diffs)
@@ -1774,7 +1875,7 @@ class AnalyseTrr():
         csa_spectral_density_params = self.read_csa_spectra_density_params()
         csa_xx_spectral_density_params, csa_yy_spectral_density_params, csa_xy_spectral_density_params = csa_spectral_density_params
 
-        axis = self.uni.select_atoms('all').principal_axes()
+        # axis = self.uni.select_atoms('all').principal_axes()
 
         # Quite a few logic checks!
         # should probably turn this into a function, also used in other routines 
@@ -1834,9 +1935,14 @@ class AnalyseTrr():
                     csa_params.append(csa_params_temp)
 
                     #get the local correlation times but fitting r1, r2, and hetnoe 
-                    current_values = np.array([r1[i], r2[i],hetnoe[i]])
+                    if use_noe:
+                        current_values = np.array([r1[i], r2[i],hetnoe[i]])
+                        current_errors = np.array([r1_err[i], r2_err[i],hetnoe_err[i]])
+                    else:
+                        current_values = np.array([r1[i], r2[i]])
+                        current_errors = np.array([r1_err[i], r2_err[i]])
+                    
                     values.append(current_values)
-                    current_errors = np.array([r1_err[i], r2_err[i],hetnoe_err[i]])
                     errors.append(current_errors)
 
                     csa_key = (atom2_type, atom2_res_type)
@@ -1857,18 +1963,18 @@ class AnalyseTrr():
             except KeyError:
                 pass
 
-
+        model_kwargs = {'max':max_d_component, 'value': 1/(6*3e-9), 'min':0}
         if model == "anisotropic":
             params = Parameters()
-            params.add('dx', min=0, value=1/(6*4e-9))
-            params.add('dy', min=0, value=1/(6*4e-9))
-            params.add('dz', min=0, value=1/(6*4e-9))
+            params.add('dx', **model_kwargs)
+            params.add('dy', **model_kwargs)
+            params.add('dz', **model_kwargs)
 
         elif model == 'sphereoid':
             params = Parameters()
-            params.add('dx', min=0, value=1/(6*4e-9))
-            params.add('dy', min=0, value=1/(6*4e-9), expr='dx')
-            params.add('dz', min=0, value=1/(6*4e-9))
+            params.add('dx', max=max_d_component, min=0, value=1/(6*2e-9))
+            params.add('dy', max=max_d_component, min=0, expr='dx')
+            params.add('dz', max=max_d_component, min=0, value=1/(6*4e-9))
 
         elif model == 'scale':
 
@@ -1883,15 +1989,15 @@ class AnalyseTrr():
             params.add('dyinit', value=dval[1], vary=False)
             params.add('dzinit', value=dval[2], vary=False)
 
-            params.add('dx', min=0, expr='dxinit*scalar')
-            params.add('dy', min=0, expr='dyinit*scalar')
-            params.add('dz', min=0, expr='dzinit*scalar')
+            params.add('dx', max=max_d_component, min=0, expr='dxinit*scalar')
+            params.add('dy', max=max_d_component, min=0, expr='dyinit*scalar')
+            params.add('dz', max=max_d_component, min=0, expr='dzinit*scalar')
         else:
             print('Model selected does not exist')
             sys.exit()
 
         minner = Minimizer(resid, params, fcn_args=(values, errors, csa, bondlengths, cosine_angles, 
-                           spectral_density_params, fields, csa_cosine_angles,csa_params))
+                           spectral_density_params, fields, csa_cosine_angles,csa_params, use_noe))
 
         result = minner.minimize()
         res_params = result.params
@@ -1966,7 +2072,7 @@ class AnalyseTrr():
     #     with open(fit_results_pickle_file, 'wb') as handle:
     #         pic.dump(emf_models, handle)
 
-    def fit_emf_correlation_to_md(self, atom_names, diffusion_file, time_max=20e-9, ignore_list=(), sv=False):
+    def fit_emf_correlation_to_md(self, atom_names, diffusion_file,mf_config,  time_max=20e-9, ignore_list=(), sv=False):
 
         atom_info = self.make_atom_pairs_list(atom_names)
         dval, diffusion_errors = utils.read_diffusion_tensor(diffusion_file)
@@ -1985,7 +2091,7 @@ class AnalyseTrr():
 
             if [atom_name1, atom_name2] not in ignore_list:
                 name = f"{self.path_prefix}_rotacf/rotacf_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
-                pdf_name =f'{self.path_prefix}_rotacf/correlation_func_{res1}_{atom_name1}_{res2}_{atom_name2}.pdf'
+                pdf_name =f'{self.path_prefix}_rotacf/correlation_func_{res1}_{atom_name1}_{res2}_{atom_name2}_check.pdf'
                 temp = self.read_gmx_xvg(name) 
 
                 x = temp.T[0]
@@ -2002,7 +2108,9 @@ class AnalyseTrr():
                 ex,ey,ez = self.cosine_angles[angles_key]
                 args = (x,ex,ey,ez)
 
-                model_params = mf.generate_mf_parameters(*dval, scale_diffusion=False, diffusion=dval)
+                model_free_class = mf.ModelFree(*dval, mf_config=mf_config)
+
+                model_params = model_free_class.generate_mf_parameters(scale_diffusion=False)
                 c0, _, _ = correlation_functions.correlation_anisotropic_emf(model_params[0], args)
                 md_with_diff = y * c0
                 mod = model_params[-1]
@@ -2016,6 +2124,9 @@ class AnalyseTrr():
                 report_fit(result)
 
                 current_model_0, mod_internal, mod_total = model(emf_models[angles_key].params, args)
+
+                plt.plot(x,y, label='raw MD')
+
                 plt.plot(x,c0, label='c0')
                 plt.plot(x,md_with_diff, label='total')
                 plt.plot(x,y,label='internal')
@@ -2033,7 +2144,249 @@ class AnalyseTrr():
         except FileExistsError:
             pass
 
-        fit_results_pickle_file = f'{self.path_prefix}_emf_fit/emf_params_from_correlations.pic'
+        fit_results_pickle_file = f'{self.path_prefix}_emf_fit/emf_params_from_correlations_check.pic'
+        with open(fit_results_pickle_file, 'wb') as handle:
+            pic.dump(emf_models, handle)
+
+    def fit_emf_correlation_to_md_internal_only(self, 
+        atom_names, 
+        time_max=0.5e-9, 
+        ignore_list=(), 
+        fit_config='emf_to_md_correlation_function.toml',
+        sv=False):
+
+        atom_info = self.make_atom_pairs_list(atom_names)
+        emf_models = {}
+
+        def model(params, time, sv):
+            internal = correlation_functions.correlation_emf_internal_only(params, time, sv=sv)
+            return internal
+
+        def resid(params, time, target, sv):
+            internal_model = model(params, time, sv)
+            return (internal_model - target)/(time*1e6 + 0.01) 
+
+        fitting_starting_conditions = toml.load(fit_config)
+
+        for res1, res2, atom_name1, atom_name2 in tqdm(atom_info):
+
+            if [atom_name1, atom_name2] not in ignore_list:
+                
+                name = f"{self.path_prefix}_rotacf/rotacf_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
+                pdf_name =f'{self.path_prefix}_rotacf/correlation_func_{res1}_{atom_name1}_{res2}_{atom_name2}_internal.pdf'
+                temp = self.read_gmx_xvg(name) 
+
+                x = temp.T[0]
+                y = temp.T[1]
+
+                y = y[x<time_max]
+                x = x[x<time_max]
+
+                if sv == True:
+                    y = y[x>0.]
+                    x = x[x>0.]
+
+                key = (res1, atom_name1, res2, atom_name2)
+
+                Ss_grid = np.linspace(0.4, 1, 4)
+                Sf_grid = np.linspace(0.4, 1, 4)
+                tau_f = np.geomspace(1e-13, 1e-9, 10)
+                tau_s = np.geomspace(0.5e-9, 10e-9, 10)
+
+                if sv == True:
+                    sv_array = np.linspace(0.7, 1, 10)
+                else:
+                    sv_array = np.array([1.])
+
+                print('doing the grid search')
+                lowest_rmsd = 1e100
+
+                for i in itertools.product(Ss_grid, Sf_grid, tau_f, tau_s, sv_array):
+                    Ss_curr, Sf_curr, tau_f_curr, tau_s_curr, Sv_current = i
+                    if tau_f_curr < tau_s_curr:
+                        values = {
+                        'tau_f':tau_f_curr, 
+                        'tau_s':tau_s_curr,
+                        'Ss': Ss_curr, 
+                        'Sf': Sf_curr,}
+
+                        if sv == True:
+                            values['Sv'] = Sv_current
+
+                        rmsd_current = resid(values, x, y, sv)
+                        rmsd_current = np.sum(rmsd_current**2)
+
+                        if rmsd_current < lowest_rmsd:
+                            best_model = i
+                            lowest_rmsd = rmsd_current
+
+                Ss_best, Sf_best, tau_f_best, tau_s_best, Sv_best = best_model
+
+                print(best_model)
+
+                params = Parameters()
+                params.add('tau_f', value=tau_f_best, min=0, max=1e-9)
+                params.add('tau_s', value=tau_s_best, min=0, max=5e-9)
+                params.add('Ss', value=Ss_best, min=0.4, max=1)
+                params.add('Sf', value=Sf_best, min=0.4, max=1)
+
+                if sv == True:
+                    params.add('Sv', min=0, max=1, value=Sv_best)
+
+                minner = Minimizer(resid, params, fcn_args=(x, y, sv))
+                result = minner.minimize(method="powel")
+                emf_models[key] = result
+                #report_fit(result)
+
+                tauf = result.params['tau_f'].value * 1e12
+                taus = result.params['tau_s'].value * 1e9
+
+                Ss = result.params['Ss'].value
+                Sf = result.params['Sf'].value
+
+                mod_internal = model(params, x, sv= sv)
+                plt.title(f'{res1} {atom_name1} {atom_name2} tauf: {tauf:0.2f}ps  Sf: {Sf:0.2f}   taus: {taus:0.2f}ns   S2: {Ss:0.2f}')
+                plt.plot(x,y,label='MD raw')
+                plt.plot(x, mod_internal, label='fit')
+                plt.ylim(0.5, 1.1)
+                plt.legend()
+                plt.savefig(pdf_name)
+                plt.show()
+                plt.close()
+                # os.exit
+
+        try:
+            os.mkdir(f'{self.path_prefix}_emf_fit/')
+        except FileExistsError:
+            pass
+
+        fit_results_pickle_file = f'{self.path_prefix}_emf_fit/emf_params_from_correlations_interal.pic'
+        with open(fit_results_pickle_file, 'wb') as handle:
+            pic.dump(emf_models, handle)
+
+    def fit_emf_correlation_three_tau_internal_only(self, 
+        atom_names, 
+        time_max=0.5e-9, 
+        ignore_list=(), 
+        fit_config='emf_to_md_correlation_function.toml'):
+
+        atom_info = self.make_atom_pairs_list(atom_names)
+        emf_models = {}
+
+        def model(params, time):
+            internal = correlation_functions.correlation_emf_three_tau_internal_only(params, time)
+            return internal
+
+        def resid(params, time, target):
+            internal_model = model(params, time)
+            return (internal_model - target)/(time*1e6 + 0.01) 
+
+        fitting_starting_conditions = toml.load(fit_config)
+
+        for res1, res2, atom_name1, atom_name2 in tqdm(atom_info):
+
+            if [atom_name1, atom_name2] not in ignore_list:
+                
+                name = f"{self.path_prefix}_rotacf/rotacf_{res1}_{atom_name1}_{res2}_{atom_name2}.xvg"
+                pdf_name =f'{self.path_prefix}_rotacf/correlation_func_{res1}_{atom_name1}_{res2}_{atom_name2}_three_tau_internal.pdf'
+                temp = self.read_gmx_xvg(name) 
+
+                x = temp.T[0]
+                y = temp.T[1]
+
+                y = y[x<time_max]
+                x = x[x<time_max]
+
+                key = (res1, atom_name1, res2, atom_name2)
+
+                amp_vf = np.linspace(0, 0.2, 10)
+                amp_f  = np.linspace(0, 0.2, 10)
+                amp_s  = np.linspace(0, 0.4, 10)
+                
+                tau_vf =  np.geomspace(0.05e-12, 10e-12, 10)
+                tau_f = np.geomspace(10e-12, 500e-12, 10)
+                tau_s = np.geomspace(0.2e-9, 10e-9, 10)
+
+
+                print('doing the grid search')
+                lowest_rmsd = 1e10000
+
+                for i in tqdm(itertools.product(amp_vf, amp_f, amp_s, tau_vf, tau_f, tau_s)):
+                    
+                    amp_vf_i, amp_f_i, amp_s_i, tau_vf_i, tau_f_i, tau_s_i = i
+                    
+                    sum_check = amp_vf_i + amp_f_i + amp_s_i
+                    
+                    run_point = True
+
+                    if tau_vf_i > tau_f_i:
+                        run_point = False
+                    elif tau_f_i > tau_s_i:
+                        run_point = False
+                    elif sum_check > 1.:
+                        run_point = False
+
+                    if run_point:
+                        #print('here', amp_vf_i, amp_f_i, amp_s_i, tau_vf_i, tau_f_i, tau_s_i)
+
+                        values = {
+                        'tau_vf':tau_vf_i, 
+                        'tau_f':tau_f_i, 
+                        'tau_s':tau_s_i,
+                        'amp_vf': amp_vf_i, 
+                        'amp_f': amp_f_i,
+                        'amp_s': amp_s_i,
+                        'S_long': 1-amp_vf_i-amp_f_i-amp_s_i}
+
+                        rmsd_current = resid(values, x, y)
+                        rmsd_current = np.sum(rmsd_current**2)
+
+                        if rmsd_current < lowest_rmsd:
+                            best_model = i
+                            lowest_rmsd = rmsd_current
+
+                amp_vf_best, amp_f_best, amp_s_best, tau_vf_best, tau_f_best, tau_s_best = best_model
+
+                params = Parameters()
+                params.add('tau_vf', value=tau_vf_best, min=0, max=1e-9)
+                params.add('tau_f', value=tau_f_best, min=0, max=1e-9)
+                params.add('tau_s', value=tau_s_best, min=0, max=5e-9)
+                
+                params.add('amp_vf', value=amp_vf_best, min=0, max=0.6)
+                params.add('amp_f', value=amp_f_best, min=0, max=0.6)
+                params.add('amp_s', value=amp_s_best, min=0, max=0.6)
+                params.add('S_long', expr='1-amp_vf-amp_f-amp_s', min=0, max=1)
+
+                minner = Minimizer(resid, params, fcn_args=(x, y))
+                result = minner.minimize(method="powel")
+                emf_models[key] = result
+                report_fit(result)
+
+                tauvf = result.params['tau_vf'].value * 1e12
+                tauf = result.params['tau_f'].value * 1e12
+                taus = result.params['tau_s'].value * 1e9
+
+                ampvf = result.params['amp_vf'].value
+                ampf = result.params['amp_f'].value
+                amps = result.params['amp_s'].value
+
+                mod_internal = model(params, x)
+                plt.title(f'{res1} {atom_name1} {atom_name2} tauvf: {tauvf:0.2f}ps  Avf: {ampvf:0.2f} tauf: {tauf:0.2f}ps  Af: {ampf:0.2f}   taus: {taus:0.2f}ns   As: {amps:0.2f}')
+                plt.plot(x,y,label='MD raw')
+                plt.plot(x, mod_internal, label='fit')
+                plt.ylim(0.5, 1.1)
+                plt.legend()
+                plt.savefig(pdf_name)
+                #plt.show()
+                plt.close()
+                # os.exit
+
+        try:
+            os.mkdir(f'{self.path_prefix}_emf_fit/')
+        except FileExistsError:
+            pass
+
+        fit_results_pickle_file = f'{self.path_prefix}_emf_fit/emf_params_from_correlations_interal_three_tau.pic'
         with open(fit_results_pickle_file, 'wb') as handle:
             pic.dump(emf_models, handle)
 

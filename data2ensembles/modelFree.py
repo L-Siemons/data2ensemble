@@ -8,6 +8,7 @@ import data2ensembles.structureUtils as strucUtils
 import data2ensembles.shuttling as shuttling
 import data2ensembles.relaxation_matricies as relax_mat
 import data2ensembles.adaptive_sampler as adaptive
+import data2ensembles.diffusion.quadratic as quad_diff
 
 from timeit import default_timer as timer
 from datetime import timedelta
@@ -303,6 +304,12 @@ class ModelFree():
         lower = config[f'{tag}_lower']
         start = config[f'{tag}_start']
         return start, upper, lower
+    
+    def unpack_rex_emf_config(self, config, tag='rex_pb'):
+        fit_status = config['fit_rex_pb']
+        scale = config['rex_scale_factor']
+        start, upper, lower = self.unpack_emf_config(tag, config)
+        return fit_status, start, upper, lower, scale
 
     def calc_cosine_angles_and_distances(self, atom_names, dist_skip=1):
         '''
@@ -332,6 +339,7 @@ class ModelFree():
         structure_analysis.path_prefix = self.path_prefix
 
         structure_analysis.calc_cosine_angles(atom_names, 
+                        self.axis,
                         calc_csa_angles=False, 
                         calc_average_structure=False,
                         reference_gro_file = self.pdb, 
@@ -493,13 +501,27 @@ class ModelFree():
         
         # models
         if simple == False:
-            #varriable order S2, tau_s, Sf, tau_f
-            models_state = [[True,  False, False, False],
-                            [True,  True,  False, False],
-                            [True,  True,  True,  False],
-                            [True,  True,  True,  True],]
+            #varriable order S2, tau_s, Sf, tau_f, rex_pb 
+            models_state = [[True,  False, False, False, False],
+                            [True,  True,  False, False, False],
+                            [True,  True,  True,  False, False],
+                            [True,  True,  True,  True, False],
+                            [False,  False, True, True, False]]
+            
+            rex_fit_status, rex_start, rex_upper, rex_lower, rex_scale = self.unpack_rex_emf_config(config)
+            
+            if rex_fit_status:
+                rex_models_state = [[True,  False, False, False, True],
+                                [True,  True,  False, False, True],
+                                [True,  True,  True,  False, True],
+                                [True,  True,  True,  True, True],
+                                [False,  False, True, True, True]]
+
+                models_state = models_state + rex_models_state        
+
+
         if simple == True:
-            models_state = [[False, False, False, False,]]
+            models_state = [[False, False, False, False,False]]
 
         #do we want to fit the diffusion ? 
         params_lists = []
@@ -516,14 +538,6 @@ class ModelFree():
             for mod in models_state:
                 params = Parameters()
 
-                #always have a S2
-                tag = 'S2'
-                if mod[0] == True:
-                    start, upper, lower = self.unpack_emf_config(tag, config)
-                    params.add(tag, value=start, min=lower, max=upper, vary=True)
-                else:
-                    params.add(tag, value=1, vary=False ,min= 0,max=1)
-
                 # now we add Sf 
                 tag = 'Sf'
                 if mod[2] == True:
@@ -531,6 +545,17 @@ class ModelFree():
                     params.add(tag, value=start, min=lower, max=upper, vary=True)
                 else:
                     params.add(tag, value=1, vary=False)
+
+                #always have a S2
+                tag = 'S2'
+                if mod[0] == True:
+                    start, upper, lower = self.unpack_emf_config(tag, config)
+                    params.add(tag, value=start, min=lower, max=upper, vary=True)
+                else:
+                    if mod[2] != True:
+                        params.add(tag, value=1, vary=False ,min= 0,max=1)
+                    else:
+                        params.add(tag, expr='Sf')
 
                 # add Ss, which depends on S2 and Sf
                 params.add('Ss', expr='S2/Sf', min=0, max=1)
@@ -550,6 +575,16 @@ class ModelFree():
                     params.add(tag, value=start, min=lower, max=upper, vary=True)
                 else:
                     params.add(tag, value=0, vary=False)
+
+                # add the rex models 
+                params.add('rex_pb_scale', value=rex_scale, vary=False)
+                if mod[4]:
+                    #print('here', rex_start, rex_lower, rex_upper)
+                    params.add('rex_pb_unscaled', value = rex_start, min=rex_lower, max=rex_upper, vary=True)
+                    params.add('rex_pb', expr='rex_pb_unscaled*rex_pb_scale')
+                else:
+                    params.add('rex_pb_unscaled', value = 0., vary=False)
+                    params.add('rex_pb', value = 0., vary=False)
 
                 if diffusion == None:
                     params.add('dx_fix',  min=0, value=dx, vary=False)
@@ -938,7 +973,8 @@ class ModelFree():
             # the model returns back all the populations 
             intensities = np.array([i[1] for i in intensities])
             exp_error = np.array(exp_error)
-            len_error = len(exp_error)
+            #len_error = len(exp_error)
+            len_error = 1.
             exp_intensity = np.array(exp_intensity)
             # here we need a prefactor to scale our calculated intensities since we do not 
             # know what the zero point is. 
@@ -1013,6 +1049,10 @@ class ModelFree():
 
         if 'lf' in residual_type:
             protons = ("H1'", "H2'", "H2''")
+            #protons = ("H1'", "H2'", "H2''", "H3'", "H4'", "H5'",  "H5''", "H6", "H5", "H8")
+            #protons = ("H1'", "H2'", "H2''", "H3'",  "H6", "H5", "H8")
+            #protons = ("H1'", "H2'", "H2''", "H6", "H5", "H8")
+            #print('protons in relaxometry:', protons)
             low_fields = list(self.ShuttleTrajectory.experiment_info.keys())
             intensities = []
             intensity_errors = []
@@ -1243,17 +1283,17 @@ class ModelFree():
 
             # do the calculation
             start_time = time.time()
-            if cpu_count == 1:
-                for i in c1p_keys:
-                    res = self.wrapper_global_residual(args)
-                    models[res[0]] = res[1] 
-            else:
+            # if cpu_count == 1:
+            #     for i in c1p_keys:
+            #         res = self.wrapper_global_residual(args)
+            #         models[res[0]] = res[1] 
+            # else:
 
-                with mp.Pool(cpu_count) as pool:
-                    results = pool.map(self.wrapper_global_residual, args)
+            with mp.Pool(cpu_count) as pool:
+                results = pool.map(self.wrapper_global_residual, args)
 
-                for i in results:
-                    models[i[0]] = i[1]
+            for i in results:
+                models[i[0]] = i[1]
 
             # blend the residuals for the models based on the aics
             for i in models:
@@ -1286,6 +1326,7 @@ class ModelFree():
         params = Parameters()
 
         if diffusion_type == 'linear':
+            print('im here')
             params.add('dx_fix',  min=0, value=self.diffusion[0], vary=False)
             params.add('dy_fix',  min=0, value=self.diffusion[1], vary=False)
             params.add('dz_fix',  min=0, value=self.diffusion[2], vary=False)
@@ -1321,57 +1362,45 @@ class ModelFree():
         minner = Minimizer(global_residual, params, fcn_args=args)
         result = minner.minimize(method='powel')
         report_fit(result)
+    
+    def get_tau_c_local(self, 
+        residual_data='hf', 
+        ):
+        """
+        Estimate per-residue isotropic rotational correlation times (τ_c) 
+        using an enforced isotropic diffusion model.
 
-    def scale_hydro_nmr_diffusion_tensor(self, 
-        lf_data_prefix='', 
-        lf_data_suffix='', 
-        select_only_some_models=False, 
-        cpu_count=-1, 
-        residual_type='hf', 
-        diffusion_type='linear'):
+        This method temporarily sets `self.scale_diffusion` to `True` and 
+        performs per-residue EMF fits with fixed isotropic diffusion coefficients. 
+        It then computes the isotropic diffusion constant (D_iso) for each residue.
 
-        '''
-        This function scales the hydroNMR diffusion tensor to NMR data using an approach similar
-        https://sci-hub.hkvisa.net/10.1126/science.7754375
+        Parameters
+        ----------
+        residual_type : str, optional
+            Type of residuals to use for the EMF fitting. Defaults to `'hf'`.
 
-        and 
+        Returns
+        -------
+        models : dict
+            Dictionary mapping residue identifiers to fitted model objects.
+        diso_local : dict
+            Dictionary mapping residue identifiers to their computed isotropic 
+            diffusion constants (D_iso).
 
-        Rotational diffusion anisotropy of proteins from simultaneous analysis of 15N and 13Cα nuclear spin relaxation
-        '''
+        Notes
+        -----
+        - This method enforces an isotropic diffusion tensor with equal `dx`, `dy`, 
+        and `dz` values.
+        - The attribute `self.scale_diffusion` is temporarily modified during 
+        execution and restored to its original value afterward.
+        - Assertions are used to verify isotropy in the fitted models.
 
-        def q_model(cosine_angles, q):
-            cosine_angles = np.array(cosine_angles)
-            part_1 = np.matmul(q, cosine_angles)
-            part_2 = np.matmul(cosine_angles, part_1)
-            return part_2
-
-        def resid(params, diso):
-
-            # set up the matrix q
-            dx = params['dx']
-            dy = params['dy']
-            dz = params['dz']
-
-            qx = (dy + dz)/2
-            qy = (dx + dz)/2
-            qz = (dx + dy)/2
-
-            q = np.zeros([3,3])
-            q[0][0] = qx
-            q[1][1] = qy
-            q[2][2] = qz
-
-            # determine the diffusions
-            diffs = []
-            for i in diso:
-                res_info = utils.get_atom_info_from_tag(i)
-                resid, resname, atom1, atom2 = res_info
-                key = (resid, atom1 , resid, atom2)
-
-                cosine_angles = self.cosine_angles[key]
-                diffs.append(diso[i] - q_model(cosine_angles, q))
-
-            return diffs
+        Raises
+        ------
+        AssertionError
+            If the fitted model's diffusion constants are not equal in all three 
+            dimensions.
+        """
 
         #step one is to get all local tau_c 
         # this will give us an isotropic model
@@ -1381,8 +1410,8 @@ class ModelFree():
         print(f'Setting self.scale_diffusion = True, from {original_value}')
         
         self.scale_diffusion = True
-        models = self.per_residue_emf_fit(residual_type=diffusion_type,
-            provided_diffusion=diffusion, writeout=False)
+        models = self.per_residue_emf_fit(residual_type=residual_data,
+            provided_diffusion=diffusion, writeout=True)
 
         print(f'Setting self.scale_diffusion back to: {original_value}')
         self.scale_diffusion = original_value
@@ -1396,37 +1425,183 @@ class ModelFree():
             assert models[i].params['dx'] == models[i].params['dz'] , "dx != dz"
             diso_local[i] = np.mean([models[i].params[j] for j in ('dx','dy','dz')])
 
-        #get moment of inertia
-        moment_of_inertia = []
-        for ts in self.universe.trajectory:
-            moment_of_inertia.append(self.universe.select_atoms('all').moment_of_inertia())
+        return models, diso_local
+    
+    def get_isotropic_diffusion_params(self):
+        params = Parameters()
 
-        # I dont think I need to transform my cosine angles if they are the angles 
-        # between the principle axis ... 
+        #scale the diffusion tensor by a single value 
+        value = np.mean(self.diffusion)
+        params.add('dz', value=value)
+        params.add('dy',  expr='dz')
+        params.add('dx',  expr='dz')
+        return params
+    
+    def get_axial_symetric_diffusion_params(self):
+        print('selecting axial model')
+        params = Parameters()
 
-        # now we set up the parameters for the diffusion calculation
+        #scale the diffusion tensor by a single value 
+        value = (self.diffusion[1]+self.diffusion[0])/2
+        params.add('dz', value=self.diffusion[2])
+        params.add('dy', value=value)
+        params.add('dx',  expr='dy')
+        return params
+    
+    def get_anisoropic_diffusion_params(self):
+        print('selecting anisotropic model')
+        params = Parameters()
+
+        #scale the diffusion tensor by a single value 
+        params.add('dx',value=self.diffusion[0])
+        params.add('dy',value=self.diffusion[1])
+        params.add('dz',value=self.diffusion[2])
+        return params
+    
+    def get_hydroNMR_diffusion_params(self):
         params = Parameters()
         params.add('dx_fix', value=self.diffusion[0], vary=False)
         params.add('dy_fix', value=self.diffusion[1], vary=False)
         params.add('dz_fix', value=self.diffusion[2], vary=False)
-
 
         #scale the diffusion tensor by a single value 
         params.add('diff_scale', min=0, value=1, vary=True)
         params.add('dx',  expr='dx_fix*diff_scale')
         params.add('dy',  expr='dy_fix*diff_scale')
         params.add('dz',  expr='dz_fix*diff_scale')
+        return params
+    
+    def select_diffusion_model(self,diffusion_type):
+        # now we set up the parameters for the diffusion calculation
+        if diffusion_type == 'isotropic':
+            params = self.get_isotropic_diffusion_params()
+        elif diffusion_type == 'axial':
+            params = self.get_axial_symetric_diffusion_params()
+        elif diffusion_type == 'anisotropic':
+            params = self.get_anisoropic_diffusion_params()
+        elif diffusion_type == 'scale_hydroNMR':
+            params = self.get_hydroNMR_diffusion_params()
+        else:
+            raise Exception('Diffusion model not known')
+        return params
+        
 
-        minner = Minimizer(resid,params, fcn_args=[diso_local])
+    
+    def determine_diffusion_tensor(self, 
+        diffusion_type = 'isotropic', 
+        diffusion_data = 'hf'):
+        '''
+        This function determines diffusion tensor to NMR data using an approach similar
+        https://sci-hub.hkvisa.net/10.1126/science.7754375
+        Long-Range Motional Restrictions in a Multi domain Zinc-Finger Protein from Anisotropic Tumbling
+
+        and 
+
+        Rotational diffusion anisotropy of proteins from simultaneous analysis of 15N and 13Cα nuclear spin relaxation
+        '''
+        
+        _, diso_local = self.get_tau_c_local(residual_data=diffusion_data )
+
+        #get moment of inertia
+        moment_of_inertia = []
+        for ts in self.universe.trajectory:
+            moment_of_inertia.append(self.universe.select_atoms('all').moment_of_inertia())
+        
+        params = self.select_diffusion_model(diffusion_type)
+        
+        minner = Minimizer(quad_diff.quadratic_diffusion_resid,
+                           params, 
+                           fcn_args=[diso_local, self.cosine_angles])
+        
         result = minner.minimize(method='powel')
         report_fit(result)
+
+        inputs = []
+        x = []
+
+        for indx, i in enumerate(diso_local):
+            res_info = utils.get_atom_info_from_tag(i)
+            resid_, resname, atom1, atom2 = res_info
+            key = (resid_, atom1 , resid_, atom2)
+            x.append(resid_)
+
+            cosine_angles = self.cosine_angles[key]
+            inputs.append(diso_local[i])
+        
+        model = inputs-result.residual
+        sorted_x, sorted_inps, sorted_residual = zip(*sorted(zip(x, inputs, model)))
+
+        inputs = np.array(inputs)
+        print('here!!!', inputs)
+        plt.title('local tauc and model')
+        plt.plot(sorted_x, sorted_inps, label='data', marker='o')
+        plt.plot(sorted_x, sorted_residual, label='model', marker='o')
+        plt.xlabel('residue')
+        plt.ylabel('$1/(6*\\tau_{c,loc})$')
+        plt.legend()
+        plt.savefig('diffusion_model_vs_data.pdf')
+        plt.show()
+
+
+        residual =  1/(6*(inputs-result.residual))*1e9
+        inputs = 1/(6*inputs)*1e9
+
+
+        plt.title('local tauc and model')
+
+        sorted_x, sorted_inps, sorted_residual = zip(*sorted(zip(x, inputs, residual)))
+
+        plt.plot(sorted_x, sorted_inps, label='data', marker='o')
+        plt.plot(sorted_x, sorted_residual, label='model', marker='o')
+        
+        plt.xlabel('residue')
+        plt.ylabel('$\\tau_{c,loc} (ns)$')
+        plt.legend()
+        plt.savefig('tauc_model_vs_data.pdf')
+        plt.show()
 
         res_dict = result.params.valuesdict()
         diso = np.mean([res_dict['dx'], res_dict['dy'], res_dict['dz']])
         print(f'Diso = {diso}')
         print(f'tauc iso = {1/(6*diso)}')
 
-    def global_connected_emf_fit(self, atom_name,
+        return res_dict, result, diso_local
+
+
+    def scale_hydro_nmr_diffusion_tensor(self, 
+        diffusion_type = 'hf'):
+        '''
+        This function determines diffusion tensor to NMR data using an approach similar
+        https://sci-hub.hkvisa.net/10.1126/science.7754375
+        Long-Range Motional Restrictions in a Multi domain Zinc-Finger Protein from Anisotropic Tumbling
+
+        and 
+
+        Rotational diffusion anisotropy of proteins from simultaneous analysis of 15N and 13Cα nuclear spin relaxation
+        '''
+        print('scaling the diffusion tensor provided')
+        res_dict, result, diso_local = self.determine_diffusion_tensor(diffusion_type = 'scale_hydroNMR', diffusion_data = diffusion_type)
+                # now calculate chi square surface
+        scale_axis = np.linspace(-1.2, 1.2, 300) + res_dict['diff_scale']
+        chi_squares = []
+        
+        for i in scale_axis:
+            params = {'dx' : self.diffusion[0] * i, 
+                      'dy' : self.diffusion[1] * i, 
+                      'dz' : self.diffusion[2] * i}
+
+            residuals = quad_diff.quadratic_diffusion_resid(params, diso_local, self.cosine_angles)
+            chi_squares.append(np.sum(residuals**2))
+
+        a = res_dict['diff_scale']
+        plt.title(f'best diffusion scalar {a}')
+        plt.plot(scale_axis, chi_squares)
+        plt.xlabel('diffusion scalar')
+        plt.ylabel('chi square value')
+        plt.savefig('diffusion_chi_square.pdf')
+        plt.show()
+
+    def global_connected_emf_fit(self, atom_name, 
         cpu_count=-1, 
         residual_type='hflf',
         provided_diffusion=None, 
@@ -1436,8 +1611,6 @@ class ModelFree():
         '''
         Here I do a global fit starting from some parameters from a local fit. 
         '''
-
-        
 
         # load the previous models
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
@@ -1469,7 +1642,7 @@ class ModelFree():
                     current_str = current_params_var.expr
                     current_str = current_str.replace('S2', f'S2_res_{resid}')
                     current_str = current_str.replace('Sf', f'Sf_res_{resid}')
-                    print(current_str)
+                    #print(current_str)
 
                     params_kwargs['expr'] = current_str
                 
@@ -1969,9 +2142,9 @@ class ModelFree():
             report_fit(result)
             emcee_results[tag] = result
 
-        if writeout == True:
-            with open(model_pic_emcee, 'wb') as handle:
-                pic.dump(emcee_results, handle)
+        # if writeout == True:
+        #     with open(model_pic_emcee, 'wb') as handle:
+        #         pic.dump(emcee_results, handle)
 
 
 
@@ -2405,7 +2578,7 @@ class ModelFree():
         vary_status = []
 
 
-        print('sorted keys:', sorted_keys)
+        #print('sorted keys:', sorted_keys)
 
         for i in sorted_keys:
             values = [models_resid[i].params[j].value for j in models_resid[i].params]
@@ -2568,7 +2741,8 @@ class ModelFree():
         model_pic='model_free_parameters.pic', 
         fields_min=14, 
         fields_max=25, 
-        per_residue_prefix='sigma_rates'):
+        per_residue_prefix='sigma_rates', 
+        print_png=False):
 
         # load the model
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
@@ -2590,9 +2764,11 @@ class ModelFree():
             ax0.errorbar(self.high_fields, self.sigma[tag],yerr=self.sigma_err[tag], fmt='o')
             ax0.plot(self.model_high_fields, model_sigma)
             ax0.set_xlabel('field (T)')
-            ax0.set_ylabel('R_{1}(Hz)')
+            ax0.set_ylabel("$\\sigma$")
 
             plt.tight_layout()
+            if print_png: 
+                plt.savefig(f"{per_residue_prefix}_{atom_name}_{resid}.png", dpi=900)
             plt.savefig(f"{per_residue_prefix}_{atom_name}_{resid}.pdf")
             plt.close()
 
@@ -2640,7 +2816,7 @@ class ModelFree():
                 model_delays = sorted(delays)
                 
                 plt.plot(model_delays, model, color=color,zorder=1)
-                plt.errorbar(delays, exp_intensity_scalled, yerr=exp_error_scalled,fmt='|', 
+                plt.errorbar(delays, exp_intensity_scalled, yerr=np.absolute(exp_error_scalled),fmt='|', 
                     c=color,zorder=2)
                 plt.scatter(delays, exp_intensity_scalled, color=color, label=f"{f:0.1f} T",edgecolor='black',zorder=3)
             
@@ -2679,7 +2855,15 @@ class ModelFree():
             pass 
 
         models, models_resid, sorted_keys, model_resinfo = self.read_pic_for_plotting(model_pic, atom_name)
-        low_fields = sorted(self.ShuttleTrajectory.experiment_info.keys())
+        
+        if hasattr(self, 'ShuttleTrajectory'):
+            low_fields = sorted(self.ShuttleTrajectory.experiment_info.keys())
+        else:
+            print('No low fields')
+            low_fields = []
+
+
+
         print('plotting relaxometry_intensities')
 
         norm = matplotlib.colors.Normalize(0, 10, clip=True)
@@ -2759,7 +2943,8 @@ class ModelFree():
                 model_delays = sorted(delays)
                 
                 ax3.plot(model_delays, model, color=color,zorder=1)
-                ax3.errorbar(delays, exp_intensity_scalled, yerr=exp_error_scalled,fmt='|', c=color,zorder=2)
+                #print('key ', i, 'errors: ', exp_error_scalled)
+                ax3.errorbar(delays, exp_intensity_scalled, yerr=np.absolute(exp_error_scalled),fmt='|', c=color,zorder=2)
                 ax3.scatter(delays, exp_intensity_scalled, color=color, label=f"{f:0.1f} T",edgecolor='black',zorder=3, s=marker_size)
 
                 data[i]['relaxometry_intensity'][f] = {}

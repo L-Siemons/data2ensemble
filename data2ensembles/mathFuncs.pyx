@@ -87,6 +87,8 @@ def cosine_angles(vec, axis):
     '''
 
     p1,p2,p3 = axis
+    p1, p2, p3 = [p / np.linalg.norm(p) for p in axis]
+    
     mag = np.linalg.norm(vec)
     ex = np.dot(vec, p1)/mag
     ey = np.dot(vec, p2)/mag
@@ -114,9 +116,11 @@ def delta2k(float da, float diso, float L2):
 
     '''
 
-    cdef float top = da - diso
-    cdef float bot = np.sqrt(diso**2 - L2) 
-    cdef total = top/bot
+    cdef long double top = da - diso
+    cdef long double bot = np.sqrt(diso**2 - L2) 
+    # print('bot ', bot)
+    # print(diso**2, L2)
+    cdef long double total = top/bot
     return total
 
 def amp_part2(float delta, float a,float b, float c):
@@ -142,7 +146,7 @@ def amp_part2(float delta, float a,float b, float c):
     '''
     return delta*(3*(a**4)+6*(b**2)*(c**2)-1)
 
-def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez):
+def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez, float isotropy_threshold=1e4):
 
     '''
     This function calculates the amplitudes and times/taus that describe anisotropic 
@@ -187,9 +191,23 @@ def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez):
     cdef int isotropy_check = 1
     
     # this is to handle the isotropic case where we end up dividing by 0 ... 
-    if dx - dy < 1e-5:
-        if  dx - dz < 1e-5:
-            isotropy_check = 0
+    condition_1 = dx - dy < isotropy_threshold
+    condition_2 =  dx - dz < isotropy_threshold
+    if condition_1 & condition_2:
+        isotropy_check = 0
+    
+    # seems like for some reason we also need this condition
+    if L2 == diso**2:
+        isotropy_check = 0
+
+    # print('isotropy_check', isotropy_check, condition_1 & condition_2,  dx - dy,  dx - dz)
+    # print(dx, dy, dz)
+    # print(type(dx))
+    # print('diso', diso)
+    # print('diso**2', diso**2)
+    # print('L2', L2)
+    # print('L2**2', L2**2)
+    # print('diff', diso**2 - L2)
 
 
     cdef float delta2x 
@@ -214,6 +232,10 @@ def calculate_anisotropic_d_amps(dx, dy,dz, float ex,float ey, float ez):
 
     cdef list amplitudes
     cdef list taus
+
+    # print('isotropy_check', isotropy_check)
+    # print('diff xy', dx - dy)
+    # print('diff xz',dx - dz)
     
     if isotropy_check == 1:
 

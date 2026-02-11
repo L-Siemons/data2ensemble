@@ -148,7 +148,7 @@ def J_anisotropic_mf_old(params, args):
 
     # unpack some varriables
     omega, cosine_angles = args 
-    ez,ey, ex, = cosine_angles
+    ex,ey, ez, = cosine_angles
 
     # give shorter names for later 
     dx = params['dxx']

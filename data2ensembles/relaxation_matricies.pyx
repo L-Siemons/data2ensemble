@@ -26,7 +26,8 @@ def relaxation_matrix(params,
 		protons_passive, 
 		x = 'c',
 		y = 'h',
-		PhysQ=PhysicalQuantities):
+		PhysQ=PhysicalQuantities, 
+		csa_model='anisotropic'):
 
 	'''
 	this is the relaxation matrix for the C1' in DNA
@@ -48,7 +49,6 @@ def relaxation_matrix(params,
 	C1'zH3'z
 	C1'zH4'z
 	'''
-
 	# make an emty matrix
 	relaxation_matrix = np.zeros([operator_size,operator_size,  len(fields)])
 	proton_dipolar = {}
@@ -56,6 +56,21 @@ def relaxation_matrix(params,
 	proton_len = len(protons)
 	proton_len_passive = len(protons_passive)
 	tsp_index_add = proton_len + 2
+
+	#print('x', x)
+
+	if csa_model not in ('anisotropic', 'axially symmetric'):
+		raise NotImplementedError()
+	
+	if csa_model == 'axially symmetric':
+		csa_angs_dict = cos_ang
+		csa_params = None 
+
+	
+	else:
+		csa_angs_dict = csa_ang
+		csa_params = None 		
+
 
 	# calculate the contribution to the dipolar network
 	for i in range(proton_len_passive):
@@ -83,6 +98,8 @@ def relaxation_matrix(params,
 	key = (resid, f"{x_spin},{y_spin}")
 	csa_atom_name = (x_spin, restype)
 	cos_key = (resid, x_spin , resid, y_spin)
+	
+	#print('x', 'y', x, y)
 	auto_C1pz = rates.r1_YX(params[key], 
 		spectral_density, 
 		fields,
@@ -90,24 +107,33 @@ def relaxation_matrix(params,
 		csa_atom_name, 
 		x, 
 		y=y, 
-		cosine_angles = cos_ang[cos_key], 
-		csa_cosine_angles=csa_ang[cos_key], 
+		cosine_angles=cos_ang[cos_key], 
+		csa_cosine_angles=csa_angs_dict[cos_key], 
 		csa_params=csa_params,
 		PhysQ=PhysQ, 
-		model='anisotropic')
+		model=csa_model)
 
 	csa_atom_name = (y_spin, restype)
-	auto_H1pz = rates.r1_YX(params[key], 
-		spectral_density, 
-		fields,
-		PhysQ.bondlengths[x_spin, y_spin], 
-		csa_atom_name, 
-		y, 
-		y=x, 
-		cosine_angles = cos_ang[cos_key], 
-		csa_cosine_angles=cos_ang[cos_key],
-		PhysQ=PhysQ, 
-		model='axially symmetric')
+	auto_H1pz = rates.r1_YX_dipollar(params[key], 
+					spectral_density, 
+					fields,
+					PhysQ.bondlengths[x_spin, y_spin], 
+					'h', 
+					y='c',
+					cosine_angles = cos_ang[cos_key])
+
+
+	#rates.r1_YX(params[key], 
+	# 	spectral_density, 
+	# 	fields,
+	# 	PhysQ.bondlengths[x_spin, y_spin], 
+	# 	csa_atom_name, 
+	# 	y, 
+	# 	y=x, 
+	# 	cosine_angles = cos_ang[cos_key], 
+	# 	csa_cosine_angles=cos_ang[cos_key],
+	# 	PhysQ=PhysQ, 
+	# 	model='axially symmetric')
 	#print('auto H1', auto_H1pz)
 
 
@@ -203,9 +229,10 @@ def relaxation_matrix(params,
 		x, 
 		y=y,
 		cosine_angles=cos_ang[cos_key], # this is if the CSA is on the I spin 
-		csa_cosine_angles=csa_ang[csa_cos_key], 
+		csa_cosine_angles=csa_angs_dict[csa_cos_key], 
 		csa_params=csa_params,
-		PhysQ=PhysQ)
+		PhysQ=PhysQ, 
+		model=csa_model)
 		#print(two_spin_order)
 
 		#print('>>>', item, relaxation_matrix[indx_tsp][indx_tsp][0])
@@ -220,8 +247,9 @@ def relaxation_matrix(params,
 		csa_atom_name, 
 		x, 
 		y=y,
-		csa_cosine_angles=csa_ang[csa_cos_key], # using the CSA of spin I 
+		csa_cosine_angles=csa_angs_dict[csa_cos_key], # using the CSA of spin I 
 		csa_params=csa_params,
+		model=csa_model,
 		PhysQ=PhysQ)
 
 		#print(p_c1h_delta[0], rxy[dist_key])
@@ -287,6 +315,18 @@ def relaxation_matrix_emf_c1p(params,
 	cdef int jndx
 	cdef int jndx_tsp
 	cdef int jndx_mod
+
+	# get the protons in the residue 
+	distance_keys = rxy.keys()
+	residue_protons = []
+	for i in distance_keys:
+		if i[0] == resid:
+			residue_protons.append(i[1])
+			residue_protons.append(i[2])
+
+	# intersection of both lists
+	residue_protons = list(set(residue_protons))
+	protons = [x for x in protons if x in residue_protons]
 
 	# make an emty matrix
 	relaxation_matrix = np.zeros([operator_size,operator_size,  len(fields)])

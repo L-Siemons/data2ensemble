@@ -110,4 +110,108 @@ def correlation_anisotropic_emf(params, args, sv=False):
     return c0, c_internal, c_total
 
 
+def correlation_emf_internal_only(params, time, sv=False):
+    '''
+
+    This is the correlation function for extended model free considering only the internal
+    motions
+
+    References for this can be found at: 
+    1) Deviations from the simple two-parameter model-free approach to the 
+    interpretation of nitrogen-15 nuclear magnetic relaxation of proteins
+    doi.org/10.1021/ja00168a070
+
+    2) Ab Initio Prediction of NMR Spin Relaxation Parameters from Molecular 
+    Dynamics Simulations
+    doi.org/10.1021/acs.jctc.7b00750
+
+    3) Rotational diffusion anisotropy of proteins from simultaneous analysis of 
+    15N and 13Cα nuclear spin relaxation
+    DOI: 10.1023/a:1018631009583
+
+    This is the correlation function associated with the spectral density 
+    J_anisotropic_emf()
+
+    Parameters
+    ----------
+        params : dictionary, Parameters class from LMFIT
+            This object stores the parameters for LMFIT during 
+            least squares fitting. In principle it should contain any 
+            object that can be indexed like a dictioary with the following 
+            keys: ('dx', 'dz', dz', 'tau_f', 'tau_s', 'Sf', 'Ss'). These 
+            correpond to the diffusion tensor and the extended model free timescales 
+            and emplitudes
+
+        time : numpy.dnarray
+            time axis
+
+        sv : bool
+            this is used to provide an additional order parameter for the 
+            fast internal correlation function such that c_internal = 
+            sv*c_internal. This can be helpful when fitting molecular dynamics 
+            simulations if you have a large drop before the first point. 
+
+    Returns
+    -------
+        c_internal : ndarray
+            This is a numpy array with the computed correlation function for internal motions
+    '''
+
+    time = time.astype(np.longdouble)
+
+    S_long = params['Sf']*params['Ss']
+
+    c_internal = S_long
+    c_f_index = -1.*(1e6*time)/(1e6*params['tau_f'])
+    c_s_index = -1.*(1e6*time)/(1e6*params['tau_s'])
     
+    c_internal = c_internal +  (1.-params['Sf'])*np.e**(c_f_index)
+    c_internal = c_internal +  (params['Sf']-S_long)*np.e**(c_s_index)
+
+    # this is here to account for the super fast decays we see within the
+    # first step of MD trajectories
+
+    if sv == True:
+        c_internal = c_internal * params['Sv']
+
+    return c_internal
+
+def correlation_emf_three_tau_internal_only(params, time):
+    '''
+
+    This is the correlation function considering three taus. 
+
+    This is implimented as an extension of 
+    Deviations from the simple two-parameter model-free approach to the interpretation of 
+    nitrogen-15 nuclear magnetic relaxation of proteins
+
+    Parameters
+    ----------
+        params : dictionary, Parameters class from LMFIT
+            This object stores the parameters for LMFIT during 
+            least squares fitting.
+
+
+        time : numpy.dnarray
+            time axis
+
+    Returns
+    -------
+        c_internal : ndarray
+            This is a numpy array with the computed correlation function for internal motions
+    '''
+
+    S_long = params['S_long']
+
+    c_internal = S_long
+
+    c_vf_index = -1.*(1e6*time)/(1e6*params['tau_vf'])    
+    c_f_index = -1.*(1e6*time)/(1e6*params['tau_f'])
+    c_s_index = -1.*(1e6*time)/(1e6*params['tau_s'])
+
+    c_internal = S_long
+    c_internal = c_internal +  params['amp_vf']*np.e**(c_vf_index)
+    c_internal = c_internal +  params['amp_f']*np.e**(c_f_index)
+    c_internal = c_internal +  params['amp_s']*np.e**(c_s_index)
+
+    return c_internal
