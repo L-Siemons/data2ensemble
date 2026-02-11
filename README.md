@@ -17,7 +17,8 @@ python3.10 -m venv <path-to-new-venv>
 source <path-to-new-venv>/bin/activate
 git clone https://github.com/L-Siemons/data2ensemble.git
 cd data2ensemble
-pip3 install . 
+pip install -r requirements.txt
+python3 setup.py install
 ```
 
 If you have any questions then please get in touch!
