@@ -141,8 +141,11 @@ def r_XzYz(params, spectral_density, fields,
         term2 = csa_j_term
 
     elif model == 'axially symmetric':
-        csa_prefactor = PhysQ.calc_axially_symetric_csa(fields, y, csa_atom_name)**2
-        term2 = spectral_density(params, [omega_y]+csa_cosine_angles)
+        # csa_prefactor = PhysQ.calc_axially_symetric_csa(fields, y, csa_atom_name)**2
+        # term2 = spectral_density(params, [omega_y]+csa_cosine_angles)
+
+        csa_prefactor = PhysQ.calc_axially_symetric_csa(fields, x, csa_atom_name)**2
+        term2 = spectral_density(params, [omega_x]+csa_cosine_angles)
 
     elif model == 'ignore':
         csa_prefactor = 0.
