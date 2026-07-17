@@ -384,7 +384,7 @@ def delta_rate(params, spectral_density, fields,
     #omega_x = PhysQ.calc_omega(x, fields)
     omega_x = PhysQ.calc_omega(x, fields)
 
-    dd_prefactor = PhysQ.calc_dd(x,y,rxy)/4
+    dd_prefactor = PhysQ.calc_dd(x,y,rxy)
 
     #anisotropic CSA 
     if model == 'anisotropic':
@@ -411,5 +411,5 @@ def delta_rate(params, spectral_density, fields,
     #print(csa_prefactor, dd_prefactor, csa_j_term)
 
     #print('>>>', csa_prefactor[-1], csa_prefactor[0],dd_prefactor, csa_j_term)
-    term2 = csa_prefactor*dd_prefactor*csa_j_term
+    term2 = csa_prefactor*dd_prefactor*csa_j_term * np.sqrt(3)
     return term2
