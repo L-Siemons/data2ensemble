@@ -2,11 +2,12 @@
 # Bryce, D. L.; Grishaev, A.; Bax, A. J. Am. Chem. Soc. 2005, 127, 7387-7396.
 # Ying, J.; Grishaev, A.; Bryce, D. L.; Bax, A. J. Am. Chem. Soc. 2006, 128, 11443-11454.
 # here the proton CSAs have been set to 0. 
-C1' A 60e-6
-C1' C 60e-6
-C1' G 60e-6
-C1' T 60e-6
-C5 C 144e-6
+C1' A 65e-6
+C1' C 65e-6
+C1' G 65e-6
+C1' T 65e-6
+C5 C 137e-6
+#C5 C 180e-6
 C6 C 186e-6
 C6 T 168e-6
 C2 A 168e-6
