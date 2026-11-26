@@ -378,6 +378,54 @@ class ModelFree():
                 c1p_keys.append(i)
         return c1p_keys
 
+    def get_c5_keys(self,):
+        '''
+        Get all the keys in the R1 dataset that have the C1' atom 
+        '''
+        keys = []
+        for i in self.r1:
+            print(i[-2:], i)
+            if "C5" == i[-2:]:
+                print('adding', i)
+                keys.append(i)
+        return keys
+    
+    def get_c6_keys(self,):
+        '''
+        Get all the keys in the R1 dataset that have the C1' atom 
+        '''
+        keys = []
+        for i in self.r1:
+            print(i[-2:], i)
+            if "C6" == i[-2:]:
+                print('adding', i)
+                keys.append(i)
+        return keys
+
+    def get_c8_keys(self,):
+        '''
+        Get all the keys in the R1 dataset that have the C8 atom 
+        '''
+        keys = []
+        for i in self.r1:
+            print(i[-2:], i)
+            if "C8" == i[-2:]:
+                print('adding', i)
+                keys.append(i)
+        return keys
+
+    def get_c2_keys(self,):
+        '''
+        Get all the keys in the R1 dataset that have the C8 atom 
+        '''
+        keys = []
+        for i in self.r1:
+            print(i[-2:], i)
+            if "C2" == i[-2:]:
+                print('adding', i)
+                keys.append(i)
+        return keys
+
     def load_peakfit_file(self, file):
         array = np.genfromtxt(file, comments="#")
         delays, intensities, errors = array.T
@@ -546,19 +594,31 @@ class ModelFree():
                 else:
                     params.add(tag, value=1, vary=False)
 
+                # old code for reference
+                # #always have a S2
+                # tag = 'S2'
+                # if mod[0] == True:
+                #     start, upper, lower = self.unpack_emf_config(tag, config)
+                #     params.add(tag, value=start, min=lower, max=upper, vary=True)
+                # else:
+                #     if mod[2] != True:
+                #         params.add(tag, value=1, vary=False ,min= 0,max=1)
+                #     else:
+                #         params.add(tag, expr='Sf')
+
+                # # add Ss, which depends on S2 and Sf
+                # params.add('Ss', expr='S2/Sf', min=0, max=1)
+
                 #always have a S2
-                tag = 'S2'
+                tag = 'Ss'
                 if mod[0] == True:
                     start, upper, lower = self.unpack_emf_config(tag, config)
                     params.add(tag, value=start, min=lower, max=upper, vary=True)
                 else:
-                    if mod[2] != True:
-                        params.add(tag, value=1, vary=False ,min= 0,max=1)
-                    else:
-                        params.add(tag, expr='Sf')
+                    params.add(tag, value=1., vary=False)
 
-                # add Ss, which depends on S2 and Sf
-                params.add('Ss', expr='S2/Sf', min=0, max=1)
+                # add S2
+                params.add('S2', expr='Ss*Sf')
 
                 # add tau_s 
                 tag = 'tau_s'
@@ -728,6 +788,7 @@ class ModelFree():
                 x_spin,
                 y_spin,
                 protons, 
+                self.csa_dd_angles,
                 x = 'c',
                 y = 'h',)
 
@@ -743,6 +804,7 @@ class ModelFree():
                 x_spin,
                 y_spin,
                 protons, 
+                self.csa_dd_angles,
                 x = 'c',
                 y = 'h',)
 
@@ -758,6 +820,7 @@ class ModelFree():
                 x_spin,
                 y_spin,
                 protons, 
+                self.csa_dd_angles,
                 x = 'c',
                 y = 'h',)
 
@@ -781,6 +844,7 @@ class ModelFree():
                 x_spin,
                 y_spin,
                 protons, 
+                self.csa_dd_angles,
                 x = 'c',
                 y = 'h',)
 
@@ -1091,7 +1155,7 @@ class ModelFree():
 
         return fcn_args, residual_func
 
-    def fit_single_residue(self, i, provided_diffusion=None, residual_type='hflf', model_select=True, minimistion_method='powell'):
+    def fit_single_residue(self, i, provided_diffusion=None, residual_type='hflf', model_select=True, minimistion_method='powel'):
         '''
         This function fits all the models available in model free (set by generate_mf_parameters())
         and selects the best one based on the lowest BIC. 
@@ -1116,6 +1180,7 @@ class ModelFree():
         '''
         # print(f'fitting {i} with method {minimistion_method}')
         # get the atom info
+        # print('tag', i)
         res_info = utils.get_atom_info_from_tag(i)
         resid, resname, atom1, atom2 = res_info
         all_models = []
@@ -1181,7 +1246,8 @@ class ModelFree():
         residual_type='hflf',
         provided_diffusion=None, 
         writeout=True, 
-        minimistion_method='powell'):
+        minimistion_method='powell', 
+        atom_type="C1'"):
 
         '''
         This funtion fits a spectral density function to each residue using the
@@ -1195,7 +1261,22 @@ class ModelFree():
         if cpu_count <= 0 :
             cpu_count = mp.cpu_count()
 
-        args = self.get_c1p_keys()
+        if atom_type == "C1'":
+            args = self.get_c1p_keys()
+        elif atom_type == "C5":
+            args = self.get_c5_keys()
+        elif atom_type == "C6":
+            args = self.get_c6_keys()
+        elif atom_type == 'C8':
+            args = self.get_c8_keys()
+        elif atom_type == 'C2':
+            args = self.get_c2_keys()
+        else:
+            raise NotImplementedError()
+        
+        print('args')
+        print(args)
+
         kwargs = {}
         kwargs['residual_type'] = residual_type
         kwargs['minimistion_method'] = minimistion_method
@@ -1419,13 +1500,32 @@ class ModelFree():
 
         # get Di
         diso_local = {}
+        err = {}
         for i in models:
             #check it was isotropic 
             assert models[i].params['dx'] == models[i].params['dy'] , "dx != dy"
             assert models[i].params['dx'] == models[i].params['dz'] , "dx != dz"
             diso_local[i] = np.mean([models[i].params[j] for j in ('dx','dy','dz')])
+            print(i, [models[i].params[j].stderr for j in ('dx','dy','dz')])
+            report_fit(models[i])
+            errs = np.array([models[i].params[j].stderr for j in ('dx','dy','dz')])
 
-        return models, diso_local
+            print(' ==== here ====')
+            print(errs)
+            print(' ==== here ====')
+
+            # errs[errs == None] = diso_local[i]*0.2
+
+            # errs[errs <=  diso_local[i] * 0.1] = diso_local[i] * 0.1
+
+            err[i] = 1 #np.mean(errs)
+
+            
+
+            print(err[i] )
+            
+
+        return models, diso_local, err
     
     def get_isotropic_diffusion_params(self):
         params = Parameters()
@@ -1500,7 +1600,7 @@ class ModelFree():
         Rotational diffusion anisotropy of proteins from simultaneous analysis of 15N and 13Cα nuclear spin relaxation
         '''
         
-        _, diso_local = self.get_tau_c_local(residual_data=diffusion_data )
+        _, diso_local, err = self.get_tau_c_local(residual_data=diffusion_data )
 
         #get moment of inertia
         moment_of_inertia = []
@@ -1508,15 +1608,16 @@ class ModelFree():
             moment_of_inertia.append(self.universe.select_atoms('all').moment_of_inertia())
         
         params = self.select_diffusion_model(diffusion_type)
-        
+        print('here2', diso_local, self.cosine_angles, err)
         minner = Minimizer(quad_diff.quadratic_diffusion_resid,
                            params, 
-                           fcn_args=[diso_local, self.cosine_angles])
+                           fcn_args=[diso_local, self.cosine_angles, err])
         
         result = minner.minimize(method='powel')
         report_fit(result)
 
         inputs = []
+        err_inp = []
         x = []
 
         for indx, i in enumerate(diso_local):
@@ -1527,14 +1628,18 @@ class ModelFree():
 
             cosine_angles = self.cosine_angles[key]
             inputs.append(diso_local[i])
+            err_inp.append(err[i])
         
-        model = inputs-result.residual
+        err_inp = np.array(err_inp)
+        
+        model = inputs-result.residual*err_inp
         sorted_x, sorted_inps, sorted_residual = zip(*sorted(zip(x, inputs, model)))
 
         inputs = np.array(inputs)
         print('here!!!', inputs)
         plt.title('local tauc and model')
-        plt.plot(sorted_x, sorted_inps, label='data', marker='o')
+        #plt.plot(sorted_x, sorted_inps, label='data', marker='o')
+        plt.errorbar(sorted_x, sorted_inps,yerr=err_inp, label='data', fmt='o')
         plt.plot(sorted_x, sorted_residual, label='model', marker='o')
         plt.xlabel('residue')
         plt.ylabel('$1/(6*\\tau_{c,loc})$')
@@ -1543,7 +1648,7 @@ class ModelFree():
         plt.show()
 
 
-        residual =  1/(6*(inputs-result.residual))*1e9
+        residual =  1/(6*(inputs-result.residual*err_inp))*1e9
         inputs = 1/(6*inputs)*1e9
 
 
@@ -1565,7 +1670,7 @@ class ModelFree():
         print(f'Diso = {diso}')
         print(f'tauc iso = {1/(6*diso)}')
 
-        return res_dict, result, diso_local
+        return res_dict, result, diso_local, err
 
 
     def scale_hydro_nmr_diffusion_tensor(self, 
@@ -1580,7 +1685,7 @@ class ModelFree():
         Rotational diffusion anisotropy of proteins from simultaneous analysis of 15N and 13Cα nuclear spin relaxation
         '''
         print('scaling the diffusion tensor provided')
-        res_dict, result, diso_local = self.determine_diffusion_tensor(diffusion_type = 'scale_hydroNMR', diffusion_data = diffusion_type)
+        res_dict, result, diso_local, err = self.determine_diffusion_tensor(diffusion_type = 'scale_hydroNMR', diffusion_data = diffusion_type)
                 # now calculate chi square surface
         scale_axis = np.linspace(-1.2, 1.2, 300) + res_dict['diff_scale']
         chi_squares = []
@@ -1590,7 +1695,7 @@ class ModelFree():
                       'dy' : self.diffusion[1] * i, 
                       'dz' : self.diffusion[2] * i}
 
-            residuals = quad_diff.quadratic_diffusion_resid(params, diso_local, self.cosine_angles)
+            residuals = quad_diff.quadratic_diffusion_resid(params, diso_local, self.cosine_angles, err)
             chi_squares.append(np.sum(residuals**2))
 
         a = res_dict['diff_scale']
@@ -2873,6 +2978,8 @@ class ModelFree():
 
         for i in tqdm(sorted_keys):
 
+            
+
             data[i] = {}
             data[i]['r1'] = {}
             data[i]['r2'] = {}
@@ -2881,6 +2988,9 @@ class ModelFree():
 
             tag = utils.resinto_to_tag(*model_resinfo[i])
             res_info = model_resinfo[i]
+
+            # print('here', i, res_info)
+
             model_r1, model_r2, model_noe = self.model_hf(models_resid[i].params,res_info, self.model_high_fields)
             model_r1_v2, model_r2_v2, model_noe_v2 = self.model_hf(models_resid[i].params,res_info, self.high_fields)
 
@@ -2930,6 +3040,8 @@ class ModelFree():
                 delays =  self.ShuttleTrajectory.experiment_info[f]['delays']
                 intensities = self.low_field_intensities[f][tag]
                 intensity_errors = self.low_field_intensity_errors[f][tag]
+
+                # print('here3', i, model_resinfo[i], protons)
                 
                 model = self.model_lf_single_field_intensities(models_resid[i].params, f, model_resinfo[i], protons)
                 model =  np.array([i[1] for i in model])
