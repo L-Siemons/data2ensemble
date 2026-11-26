@@ -259,6 +259,7 @@ class AnalyseTrr():
             for a in atoms:
 
                 check = a[0] in uni_res_atom_names and a[1] in uni_res_atom_names
+                # check1 = a[0] in uni_res_atom_names and a[1] in uni_res_atom_names
 
                 if distance_cutoff == True and check == True:
                     key = (i.resid, a[0], a[1])
@@ -269,19 +270,28 @@ class AnalyseTrr():
 
                 if check == True:
                     atom_info.append([i.resid, i.resid, a[0], a[1]])
+                # else:
+                #     print('ignoring residue', i, 'and atom ', a , check1)
 
         return atom_info
 
     def calc_inter_atom_distances(self, atom_names, skip=1000):
 
         print('calculating MD distances')
+        # print(' ==== atom_names ==== ')
+        # print(atom_names)
+        # print(' ==== atom_names ==== ')
+
         atom_info = self.make_atom_pairs_list(atom_names, distance_cutoff=False)
+        # print(atom_info)
         selections = {}
         distances = {}
         for res1, res2, atom_name1, atom_name2 in atom_info:
 
+
             key = (res1, atom_name1, atom_name2)
-            #print(key)
+            if res1 == 1:
+                print(key)
             sel1 = f'resid {res1} and name {atom_name1}'
             sel2 = f'resid {res2} and name {atom_name2}'
             sele = [self.uni.select_atoms(sel1)[0], self.uni.select_atoms(sel2)[0]]
@@ -412,7 +422,7 @@ class AnalyseTrr():
                 angz = np.rad2deg(np.arccos(angs[2]))
                 angles_out.write(f'{res1}\t{atom_name1}\t{angx}\t{angy}\t{angz}\n')
 
-
+            # print('Doing:', (atom_name1, atom_name2))
             if (atom_name1, atom_name2) in csa_ignore_list:
                 csa_atom_check = False
             else:
@@ -1417,7 +1427,7 @@ class AnalyseTrr():
 
 
             angs = self.cosine_angles[(res1, atom_name1, res2, atom_name2)]
-            csa_angs = self.csa_cosine_angles[(res1, atom_name1, res2, atom_name2)]
+            #csa_angs = self.csa_cosine_angles[(res1, atom_name1, res2, atom_name2)]
             rxy = PhysQ.bondlengths[atom_name1, atom_name2]
             spectral_density_key = (res1, atom_name1+','+atom_name2)
             params = spectral_density_params[spectral_density_key]
@@ -1594,6 +1604,7 @@ class AnalyseTrr():
                     y_spin,
                     active_protons,
                     passive_protons,
+                    self.csa_dd_angles,
                     csa_model=csa_model
                     )
 
@@ -1611,6 +1622,7 @@ class AnalyseTrr():
                     y_spin,
                     active_protons,
                     passive_protons,
+                    self.csa_dd_angles,
                     csa_model=csa_model)
 
                     relaxation_matricies_stablaization_delay = relax_mat.relaxation_matrix(spectral_density_params, 
@@ -1627,6 +1639,7 @@ class AnalyseTrr():
                     y_spin,
                     active_protons,
                     passive_protons,
+                    self.csa_dd_angles,
                     csa_model=csa_model)
 
                     forwrds_propergators = mathFunc.construct_operator(relaxation_matricies_forwards, forwards_time)
@@ -1654,6 +1667,7 @@ class AnalyseTrr():
                     y_spin,
                     active_protons,
                     passive_protons, 
+                    self.csa_dd_angles,
                     csa_model=csa_model)
 
                     # print("Field", i)
