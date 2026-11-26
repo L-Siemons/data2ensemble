@@ -24,6 +24,7 @@ def relaxation_matrix(params,
 		y_spin,
 		protons, 
 		protons_passive, 
+		csa_dd_angles, 
 		x = 'c',
 		y = 'h',
 		PhysQ=PhysicalQuantities, 
@@ -49,6 +50,9 @@ def relaxation_matrix(params,
 	C1'zH3'z
 	C1'zH4'z
 	'''
+
+	# print('yspin start', y_spin)
+
 	# make an emty matrix
 	relaxation_matrix = np.zeros([operator_size,operator_size,  len(fields)])
 	proton_dipolar = {}
@@ -214,8 +218,11 @@ def relaxation_matrix(params,
 		key = (resid, f"{x_spin},{item}")
 		dist_key = (resid,x_spin , item)
 		cos_key = (resid, x_spin , resid, item)
+		
+		# print('yspin before crash ', y_spin, item)
 
-
+		# print('here =============')
+		# print(rxy.keys())
 		if item == f"{y_spin}":
 			current_dist = PhysQ.bondlengths[x_spin, y_spin]
 		else:
@@ -238,13 +245,20 @@ def relaxation_matrix(params,
 		#print('>>>', item, relaxation_matrix[indx_tsp][indx_tsp][0])
 		relaxation_matrix[indx_tsp][indx_tsp] = relaxation_matrix[indx_tsp][indx_tsp] + two_spin_order
 		#print(relaxation_matrix[indx_tsp][indx_tsp][0])
-		
+
+		csa_dd_key = f"{x_spin}_{item}"
+		csa_dd_angle = csa_dd_angles[csa_dd_key]
+
+		# print('csa_dd_angle', csa_dd_angle)
+		# quit()
+
 		# now we add the cross correlated relaxation
 		p_c1h_delta = rates.delta_rate(params[key], 
 		spectral_density, 
 		fields, 
 		current_dist, 
 		csa_atom_name, 
+		csa_dd_angle, 
 		x, 
 		y=y,
 		csa_cosine_angles=csa_angs_dict[csa_cos_key], # using the CSA of spin I 
@@ -272,7 +286,8 @@ def relaxation_matrix_emf_c1p(params,
 		int operator_size, 
 		str x_spin,
 		str y_spin,
-		protons, 
+		protons,
+		csa_dd_angles, 
 		str x = 'c',
 		str y = 'h',
 		PhysQ=PhysicalQuantities):
@@ -460,7 +475,10 @@ def relaxation_matrix_emf_c1p(params,
 		dist_key = (resid,x_spin , item)
 		cos_key = (resid, x_spin , resid, item)
 
+		csa_dd_key = f"{x_spin}_{item}"
+		csa_dd_angle = csa_dd_angles[csa_dd_key]
 
+		# print(item)
 		if item == f"{y_spin}":
 			current_dist = PhysQ.bondlengths[x_spin, y_spin]
 		else:
@@ -485,14 +503,19 @@ def relaxation_matrix_emf_c1p(params,
 		fields, 
 		current_dist, 
 		csa_atom_name, 
-		x, 
+		csa_dd_angle,
+		x,
 		y=y,
 		model='axially symmetric',
 		csa_cosine_angles = cos_ang[cos_key],
 		PhysQ=PhysQ)
 
+		p_c1h_delta = p_c1h_delta
+
 		relaxation_matrix[1][indx_tsp] = p_c1h_delta
 		relaxation_matrix[indx_tsp][1] = p_c1h_delta
+
+		# print(indx, item)
 
 	return relaxation_matrix
 
