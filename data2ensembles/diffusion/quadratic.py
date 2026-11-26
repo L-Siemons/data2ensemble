@@ -36,11 +36,16 @@ def q_model_from_params(cosine_angles, params):
     model = q_model(cosine_angles, q)
     return model
 
-def model_all_residues(params, diso_local, cosine_angles):
+def model_all_residues(params, diso_local, cosine_angles, err):
     # determine the diffusions
     diffs = []
     model = []
     for i in diso_local:
+
+        if err is None:
+            current_error = 1
+        else:        
+            current_error = err[i]
         res_info = utils.get_atom_info_from_tag(i)
         resid, resname, atom1, atom2 = res_info
         key = (resid, atom1 , resid, atom2)
@@ -48,12 +53,12 @@ def model_all_residues(params, diso_local, cosine_angles):
         current_cosine_angles = cosine_angles[key]
         current_model = q_model_from_params(current_cosine_angles, params)
         model.append(current_model)
-        diffs.append(diso_local[i] - current_model)
+        diffs.append((diso_local[i] - current_model)/current_error)
 
     diffs = np.array(diffs) 
     model = np.array(model)
     return model, diffs
 
-def quadratic_diffusion_resid(params, diso_local,cosine_angles):
-    _, diffs = model_all_residues(params, diso_local, cosine_angles)
+def quadratic_diffusion_resid(params, diso_local,cosine_angles, err):
+    _, diffs = model_all_residues(params, diso_local, cosine_angles, err)
     return diffs
