@@ -5,5 +5,4 @@ matplotlib==3.10.3
 MDAnalysis==2.9.0
 numdifftools==0.9.41
 numpy==2.2.6
-scipy==1.15.3
 tqdm==4.67.1
