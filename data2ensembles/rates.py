@@ -368,7 +368,7 @@ def r1_reduced_noe_YX(params,
     return term2
 
 def delta_rate(params, spectral_density, fields,
-    rxy, csa_atom_name, x, y='h', 
+    rxy, csa_atom_name,csa_dd_angle, x, y='h',
     csa_cosine_angles=None, csa_params=None,
     PhysQ=PhysicalQuantities, model='anisotropic'):
 
@@ -384,7 +384,7 @@ def delta_rate(params, spectral_density, fields,
     #omega_x = PhysQ.calc_omega(x, fields)
     omega_x = PhysQ.calc_omega(x, fields)
 
-    dd_prefactor = PhysQ.calc_dd(x,y,rxy)
+    dd_prefactor = -1*PhysQ.calc_dd(x,y,rxy)
 
     #anisotropic CSA 
     if model == 'anisotropic':
@@ -411,5 +411,8 @@ def delta_rate(params, spectral_density, fields,
     #print(csa_prefactor, dd_prefactor, csa_j_term)
 
     #print('>>>', csa_prefactor[-1], csa_prefactor[0],dd_prefactor, csa_j_term)
-    term2 = csa_prefactor*dd_prefactor*csa_j_term * np.sqrt(3)
+    p2 = 0.5*(3*np.cos(csa_dd_angle)**2 - 1)
+    # print('p2:', p2)
+    # print('csa_dd_angle', csa_dd_angle)
+    term2 = csa_prefactor*dd_prefactor*csa_j_term * np.sqrt(3)*p2
     return term2
